@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.4.3)
 
+set(CMAKE_MODULE_PATH "/opt/rocm/hip/cmake" ${CMAKE_MODULE_PATH})
+find_package(HIP)
+#HIP_PATH ?= $(shell hipconfig --path)
 project(OptSched LANGUAGES CXX CUDA HIP)
 #include_directories("${CUDA_INCLUDE_DIRS}")
 
