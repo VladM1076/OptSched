@@ -41,7 +41,7 @@ set(OPTSCHED_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(OPTSCHED_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
 # OptSched sources
-SET(OPT_SCHED_SRCS Scheduler/aco.hip
+SET(OPT_SCHED_SRCS Scheduler/aco.hip.cpp
   Scheduler/bb_spill.cpp
   Scheduler/buffers.cpp
   Scheduler/config.cpp
