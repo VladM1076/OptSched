@@ -13,7 +13,7 @@ Last Update:  Mar. 2011
 #include "opt-sched/Scheduler/defines.h"
 #include "opt-sched/Scheduler/cuda_lnkd_lst.cuh"
 #include "opt-sched/Scheduler/array_list.h"
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
 
 namespace llvm {
 namespace opt_sched {
@@ -288,7 +288,7 @@ public:
   // Copy GraphNode arrays/pointers to device
   void CopyPointersToDevice(GraphNode *dev_node, GraphNode **dev_nodes,
 		            InstCount instCnt);
-  // Calls cudaFree on all arrays/objects that were allocated with cudaMalloc
+  // Calls hipFree on all arrays/objects that were allocated with hipMalloc
   void FreeDevicePointers();
 
 private:

@@ -10,7 +10,7 @@ Last Update:  Mar. 2017
 
 #include "opt-sched/Scheduler/defines.h"
 #include <chrono>
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
 
 namespace llvm {
 namespace opt_sched {

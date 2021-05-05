@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #include "opt-sched/Scheduler/aco.h"
 #include "opt-sched/Scheduler/config.h"
 #include "opt-sched/Scheduler/data_dep.h"
@@ -8,7 +9,7 @@
 #include "opt-sched/Scheduler/bb_spill.h"
 #include "opt-sched/Scheduler/dev_defines.h"
 #include <thrust/functional.h>
-#include <cooperative_groups.h>
+#include <hip/hip_cooperative_groups.h>
 #include "llvm/ADT/STLExtras.h"
 #include <iomanip>
 #include <iostream>
@@ -50,7 +51,7 @@ ACOScheduler::ACOScheduler(DataDepGraph *dataDepGraph,
                            bool IsPostBB, SchedRegion *dev_rgn,
                            DataDepGraph *dev_DDG, 
                            DeviceVector<Choice> *dev_ready,
-			   MachineModel *dev_MM, curandState_t *dev_states)
+			   MachineModel *dev_MM, hiprandState_t *dev_states)
     : ConstrainedScheduler(dataDepGraph, machineModel, upperBound) {
   VrfySched_ = vrfySched;
   this->IsPostBB = IsPostBB;
@@ -133,7 +134,7 @@ bool ACOScheduler::shouldReplaceSchedule(InstSchedule *OldSched,
 
   // if it is the 1st pass return the cost comparison
   // if it is the 2nd pass return true if the RP cost and ILP cost is less
-#ifdef __CUDA_ARCH__
+#if __HIP_DEVICE_COMPILE__
   bool isSecondPass = dev_rgn_->IsSecondPass();
 #else
   bool isSecondPass = rgn_->IsSecondPass(); 
@@ -161,8 +162,8 @@ Choice ACOScheduler::SelectInstruction(DeviceVector<Choice> &ready,
                                        SchedInstruction *lastInst) {
   double rand;
 #if TWO_STEP
-#ifdef __CUDA_ARCH__
-  rand = curand_uniform(&dev_states_[GLOBALTID]);
+#if __HIP_DEVICE_COMPILE__
+  rand = hiprand_uniform(&dev_states_[GLOBALTID]);
 #else
   rand = RandDouble(0, 1); 
 #endif
@@ -177,9 +178,9 @@ Choice ACOScheduler::SelectInstruction(DeviceVector<Choice> &ready,
 /* currently not used
   if (use_tournament) {
     int POPULATION_SIZE = ready.size();
-#ifdef __CUDA_ARCH__
-    int r_pos = (int)(curand_uniform(&dev_states_[GLOBALTID]) * POPULATION_SIZE);
-    int s_pos = (int)(curand_uniform(&dev_states_[GLOBALTID]) * POPULATION_SIZE);
+#if __HIP_DEVICE_COMPILE__
+    int r_pos = (int)(hiprand_uniform(&dev_states_[GLOBALTID]) * POPULATION_SIZE);
+    int s_pos = (int)(hiprand_uniform(&dev_states_[GLOBALTID]) * POPULATION_SIZE);
 #else
     int r_pos = (int)(RandDouble(0, 1) * POPULATION_SIZE);
     int s_pos = (int)(RandDouble(0, 1) * POPULATION_SIZE);
@@ -215,8 +216,8 @@ Choice ACOScheduler::SelectInstruction(DeviceVector<Choice> &ready,
   if (rand < choose_best_chance)
     return maxChoice;
 #endif
-#ifdef __CUDA_ARCH__
-  pheromone_t point = sum * curand_uniform(&dev_states_[GLOBALTID]);
+#if __HIP_DEVICE_COMPILE__
+  pheromone_t point = sum * hiprand_uniform(&dev_states_[GLOBALTID]);
 #else
   pheromone_t point = RandDouble(0, sum);
 #endif
@@ -225,7 +226,7 @@ Choice ACOScheduler::SelectInstruction(DeviceVector<Choice> &ready,
     if (point <= 0)
       return choice;
   }
-#ifdef __CUDA_ARCH__
+#if __HIP_DEVICE_COMPILE__
   //atomicAdd(&returnLastInstCnt_, 1);
 #else
   printf("returning last instruction\n");
@@ -246,7 +247,7 @@ __host__ __device__
 InstSchedule *ACOScheduler::FindOneSchedule(InstCount RPTarget, 
                                             InstSchedule *dev_schedule,
 		                            DeviceVector<Choice> *dev_ready) {
-#ifdef __CUDA_ARCH__ // device version of function
+#if __HIP_DEVICE_COMPILE__ // device version of function
   SchedInstruction *inst = NULL;
   SchedInstruction *lastInst = NULL;
   InstSchedule *schedule = dev_schedule;
@@ -591,10 +592,7 @@ void Dev_ACO(SchedRegion *dev_rgn, DataDepGraph *dev_DDG,
     // make sure all threads have constructed schedules, then pick 1 iteration
     // best schedule for pheromone update
     threadGroup.sync();
-    // I chose thread #32 here so in the case that we want each thread block to
-    // find its iteration best, block #0's find blockIterationBest will be
-    // handled by a warp 0 while warp 1 finds overall best
-    if (GLOBALTID == 32) {
+    if (GLOBALTID == 0) {
       bestIndex = INVALID_VALUE;
       for (int i = 0; i < NUMTHREADS; i++) {
         if (dev_schedules[i]->GetCost() == INVALID_VALUE) {
@@ -648,7 +646,7 @@ void Dev_ACO(SchedRegion *dev_rgn, DataDepGraph *dev_DDG,
     }
 #endif
     // 1 thread compares iteration best to overall bestsched
-    if (GLOBALTID == 32) {
+    if (GLOBALTID == 0) {
       // Compare to initialSched/current best
       if (globalBestIndex != INVALID_VALUE &&
           dev_AcoSchdulr->shouldReplaceSchedule(dev_bestSched, 
@@ -753,11 +751,11 @@ FUNC_RESULT ACOScheduler::FindSchedule(InstSchedule *schedule_out,
     // An array of pointers to schedules which are copied over
     InstSchedule **host_schedules = new InstSchedule *[NUMTHREADS];
     // Allocate one large array that will be split up between the dev arrays
-    // of all InstSchedules. Massively decrease calls to cudaMalloc/Free
+    // of all InstSchedules. Massively decrease calls to hipMalloc/Free
     InstCount *dev_temp;
     size_t sizePerSched = bestSchedule->GetSizeOfDevArrays();
     memSize = sizePerSched * NUMTHREADS * sizeof(InstCount);
-    gpuErrchk(cudaMalloc(&dev_temp, memSize));
+    gpuErrchk(hipMalloc(&dev_temp, memSize));
     memSize = sizeof(InstSchedule);
     for (int i = 0; i < NUMTHREADS; i++) {
       // Create new schedule
@@ -766,27 +764,27 @@ FUNC_RESULT ACOScheduler::FindSchedule(InstSchedule *schedule_out,
       // dev arrays for InstSchedule
       host_schedules[i]->SetDevArrayPointers(dev_MM_, 
                                              &dev_temp[i*sizePerSched]);
-      // Copy to temp_schedules array to later copy to device with 1 cudaMemcpy
+      // Copy to temp_schedules array to later copy to device with 1 hipMemcpy
       memcpy(&temp_schedules[i], host_schedules[i], memSize);
     }
     // Allocate and Copy array of schedules to device
     // A device array of schedules
     InstSchedule *dev_schedules_arr;
     memSize = sizeof(InstSchedule) * NUMTHREADS;
-    gpuErrchk(cudaMalloc(&dev_schedules_arr, memSize));
+    gpuErrchk(hipMalloc(&dev_schedules_arr, memSize));
     // Copy schedules to device
-    gpuErrchk(cudaMemcpy(dev_schedules_arr, temp_schedules, memSize,
-                         cudaMemcpyHostToDevice));
+    gpuErrchk(hipMemcpy(dev_schedules_arr, temp_schedules, memSize,
+                         hipMemcpyHostToDevice));
     free(temp_schedules);
     // Create a dev array of pointers to dev_schedules_arr
     // Passing and array of schedules and dereferencing the array
     // to get pointers slows down the kernel significantly
     InstSchedule **dev_schedules;
     memSize = sizeof(InstSchedule *) * NUMTHREADS;
-    gpuErrchk(cudaMallocManaged(&dev_schedules, memSize));
+    gpuErrchk(hipMallocManaged(&dev_schedules, memSize));
     for (int i = 0; i < NUMTHREADS; i++)
       dev_schedules[i] = &dev_schedules_arr[i];
-    gpuErrchk(cudaMemPrefetchAsync(dev_schedules, memSize, 0));
+    gpuErrchk(hipMemPrefetchAsync(dev_schedules, memSize, 0));
     // Copy over best schedule
     // holds device copy of best sched, to be copied back to host after kernel
     InstSchedule *dev_bestSched;
@@ -795,16 +793,16 @@ FUNC_RESULT ACOScheduler::FindSchedule(InstSchedule *schedule_out,
     bestSchedule->AllocateOnDevice(dev_MM_);
     bestSchedule->CopyArraysToDevice();
     memSize = sizeof(InstSchedule);
-    gpuErrchk(cudaMalloc((void**)&dev_bestSched, memSize));
-    gpuErrchk(cudaMemcpy(dev_bestSched, bestSchedule, memSize,
-                         cudaMemcpyHostToDevice));
+    gpuErrchk(hipMalloc((void**)&dev_bestSched, memSize));
+    gpuErrchk(hipMemcpy(dev_bestSched, bestSchedule, memSize,
+                         hipMemcpyHostToDevice));
     // Make sure managed memory is copied to device before kernel start
     memSize = sizeof(ACOScheduler);
-    gpuErrchk(cudaMemPrefetchAsync(dev_AcoSchdulr, memSize, 0));
+    gpuErrchk(hipMemPrefetchAsync(dev_AcoSchdulr, memSize, 0));
     Logger::Info("Launching Dev_ACO with %d blocks of %d threads", NUMBLOCKS,
                                                            NUMTHREADSPERBLOCK);
     // Using Cooperative Grid Groups requires launching with
-    // cudaLaunchCooperativeKernel which requires kernel args to be an array
+    // hipLaunchCooperativeKernel which requires kernel args to be an array
     // of void pointers to host memory locations of the arguments
     dim3 gridDim(NUMBLOCKS);
     dim3 blockDim(NUMTHREADSPERBLOCK);
@@ -816,26 +814,26 @@ FUNC_RESULT ACOScheduler::FindSchedule(InstSchedule *schedule_out,
     dArgs[4] = (void*)&dev_ready_;
     dArgs[5] = (void*)&dev_bestSched;
     dArgs[6] = (void*)&noImprovementMax;
-    gpuErrchk(cudaLaunchCooperativeKernel((void*)Dev_ACO, gridDim, blockDim, 
+    gpuErrchk(hipLaunchCooperativeKernel((void*)Dev_ACO, gridDim, blockDim, 
                                           dArgs));
-    cudaDeviceSynchronize();
+    hipDeviceSynchronize();
     Logger::Info("Post Kernel Error: %s", 
-                 cudaGetErrorString(cudaGetLastError()));
+                 hipGetErrorString(hipGetLastError()));
     // Copy dev_bestSched back to host
     memSize = sizeof(InstSchedule);
-    gpuErrchk(cudaMemcpy(bestSchedule, dev_bestSched, memSize,
-                         cudaMemcpyDeviceToHost));
+    gpuErrchk(hipMemcpy(bestSchedule, dev_bestSched, memSize,
+                         hipMemcpyDeviceToHost));
     bestSchedule->CopyArraysToHost();
     // Free allocated memory that is no longer needed
     bestSchedule->FreeDeviceArrays();
-    cudaFree(dev_bestSched);
+    hipFree(dev_bestSched);
     for (int i = 0; i < NUMTHREADS; i++) {
       delete host_schedules[i];
     }
     delete[] host_schedules;
     // delete the large array shared by all schedules
-    cudaFree(dev_temp);
-    cudaFree(dev_schedules);
+    hipFree(dev_temp);
+    hipFree(dev_schedules);
 
   } else { // Run ACO on cpu
     Logger::Info("Running host ACO with %d ants per iteration", NUMTHREADS);
@@ -898,7 +896,7 @@ FUNC_RESULT ACOScheduler::FindSchedule(InstSchedule *schedule_out,
 
 __host__ __device__
 void ACOScheduler::UpdatePheromone(InstSchedule *schedule) {
-#ifdef __CUDA_ARCH__ // device version of function
+#if __HIP_DEVICE_COMPILE__ // device version of function
 #if (PHER_UPDATE_SCHEME == ONE_PER_ITER)
   // parallel on global level
   int instNum = GLOBALTID;
@@ -1001,7 +999,7 @@ void ACOScheduler::CopyPheromonesToSharedMem(double *s_pheromone) {
 }
 
 inline void ACOScheduler::UpdtRdyLst_(InstCount cycleNum, int slotNum) {
-#ifdef __CUDA_ARCH__ // Device version
+#if __HIP_DEVICE_COMPILE__ // Device version
   InstCount prevCycleNum = cycleNum - 1;
   int lstSize = dev_instsWithPrdcsrsSchduld_[GLOBALTID]->size_;
   PriorityArrayList<InstCount, InstCount> *lst = 
@@ -1109,57 +1107,57 @@ void ACOScheduler::AllocDevArraysForParallelACO() {
   size_t memSize;
   // Alloc dev array for schduldInstCnt_
   memSize = sizeof(InstCount) * NUMTHREADS;
-  gpuErrchk(cudaMalloc(&dev_schduldInstCnt_, memSize));
+  gpuErrchk(hipMalloc(&dev_schduldInstCnt_, memSize));
   // Alloc dev array for crntCycleNum_;
   memSize = sizeof(InstCount) * NUMTHREADS;
-  gpuErrchk(cudaMalloc(&dev_crntCycleNum_, memSize));
+  gpuErrchk(hipMalloc(&dev_crntCycleNum_, memSize));
   // Alloc dev array for crntSlotNum_;
   memSize = sizeof(InstCount) * NUMTHREADS;
-  gpuErrchk(cudaMalloc(&dev_crntSlotNum_, memSize));
+  gpuErrchk(hipMalloc(&dev_crntSlotNum_, memSize));
   // Allo dev array for crntRealSlotNum_
   memSize = sizeof(InstCount) * NUMTHREADS;
-  gpuErrchk(cudaMalloc(&dev_crntRealSlotNum_, memSize));
+  gpuErrchk(hipMalloc(&dev_crntRealSlotNum_, memSize));
   // Alloc dev array for isCrntCycleBlkd_;
   memSize = sizeof(bool) * NUMTHREADS;
-  gpuErrchk(cudaMalloc(&dev_isCrntCycleBlkd_, memSize));
+  gpuErrchk(hipMalloc(&dev_isCrntCycleBlkd_, memSize));
   // Alloc dev array for rdyLst_
   rdyLst_->AllocDevArraysForParallelACO(NUMTHREADS);
   // Alloc dev array for avlblSlotsInCrntCycle_
   memSize = sizeof(int16_t *) * NUMTHREADS;
-  gpuErrchk(cudaMallocManaged(&dev_avlblSlotsInCrntCycle_, memSize));
+  gpuErrchk(hipMallocManaged(&dev_avlblSlotsInCrntCycle_, memSize));
   // Alloc dev arrays of avlblSlotsInCrntCycle_ for each thread
   memSize = sizeof(int16_t) * issuTypeCnt_;
   for (int i = 0; i < NUMTHREADS; i++) {
-    gpuErrchk(cudaMalloc(&dev_avlblSlotsInCrntCycle_[i], memSize));
+    gpuErrchk(hipMalloc(&dev_avlblSlotsInCrntCycle_[i], memSize));
   }
   // Alloc dev arrays for dev_instsWithPrdcsrsSchduld_
   memSize = sizeof(PriorityArrayList<InstCount, InstCount> *) * NUMTHREADS;
-  gpuErrchk(cudaMallocManaged(&dev_instsWithPrdcsrsSchduld_, memSize));
+  gpuErrchk(hipMallocManaged(&dev_instsWithPrdcsrsSchduld_, memSize));
   // Alloc dev arrays for rsrvSlots_
   memSize = sizeof(ReserveSlot *) * NUMTHREADS;
-  gpuErrchk(cudaMallocManaged(&dev_rsrvSlots_, memSize));
+  gpuErrchk(hipMallocManaged(&dev_rsrvSlots_, memSize));
   memSize = sizeof(ReserveSlot) * issuRate_;
   for (int i = 0; i < NUMTHREADS; i++) {
-    gpuErrchk(cudaMalloc(&dev_rsrvSlots_[i], memSize));
+    gpuErrchk(hipMalloc(&dev_rsrvSlots_[i], memSize));
   }
   memSize = sizeof(int16_t) * NUMTHREADS;
-  gpuErrchk(cudaMalloc(&dev_rsrvSlotCnt_, memSize));
+  gpuErrchk(hipMalloc(&dev_rsrvSlotCnt_, memSize));
 }
 
 void ACOScheduler::CopyPheromonesToDevice(ACOScheduler *dev_AcoSchdulr) {
   size_t memSize;
   // Free allocated mem sinve pheromone size can change
   if (dev_AcoSchdulr->dev_pheromone_elmnts_alloced_ == true)
-    cudaFree(dev_AcoSchdulr->pheromone_.elmnts_);
+    hipFree(dev_AcoSchdulr->pheromone_.elmnts_);
 
   memSize = sizeof(DeviceVector<pheromone_t>);
-  gpuErrchk(cudaMemcpy(&dev_AcoSchdulr->pheromone_, &pheromone_, memSize,
-            cudaMemcpyHostToDevice));
+  gpuErrchk(hipMemcpy(&dev_AcoSchdulr->pheromone_, &pheromone_, memSize,
+            hipMemcpyHostToDevice));
 
   memSize = sizeof(pheromone_t) * pheromone_.alloc_;
-  gpuErrchk(cudaMalloc(&(dev_AcoSchdulr->pheromone_.elmnts_), memSize));
-  gpuErrchk(cudaMemcpy(dev_AcoSchdulr->pheromone_.elmnts_, pheromone_.elmnts_,
-		       memSize, cudaMemcpyHostToDevice));
+  gpuErrchk(hipMalloc(&(dev_AcoSchdulr->pheromone_.elmnts_), memSize));
+  gpuErrchk(hipMemcpy(dev_AcoSchdulr->pheromone_.elmnts_, pheromone_.elmnts_,
+		       memSize, hipMemcpyHostToDevice));
   
   dev_AcoSchdulr->dev_pheromone_elmnts_alloced_ = true;
 }
@@ -1171,16 +1169,16 @@ void ACOScheduler::CopyPointersToDevice(ACOScheduler *dev_ACOSchedulr) {
   // Copy slotsPerTypePerCycle_
   int *dev_slotsPerTypePerCycle;
   memSize = sizeof(int) * issuTypeCnt_;
-  gpuErrchk(cudaMalloc(&dev_slotsPerTypePerCycle, memSize));
-  gpuErrchk(cudaMemcpy(dev_slotsPerTypePerCycle, slotsPerTypePerCycle_,
-		       memSize, cudaMemcpyHostToDevice));
+  gpuErrchk(hipMalloc(&dev_slotsPerTypePerCycle, memSize));
+  gpuErrchk(hipMemcpy(dev_slotsPerTypePerCycle, slotsPerTypePerCycle_,
+		       memSize, hipMemcpyHostToDevice));
   dev_ACOSchedulr->slotsPerTypePerCycle_ = dev_slotsPerTypePerCycle;
   // Copy instCntPerIssuType_
   InstCount *dev_instCntPerIssuType;
   memSize = sizeof(InstCount) * issuTypeCnt_;
-  gpuErrchk(cudaMalloc(&dev_instCntPerIssuType, memSize));
-  gpuErrchk(cudaMemcpy(dev_instCntPerIssuType, instCntPerIssuType_, memSize,
-		       cudaMemcpyHostToDevice));
+  gpuErrchk(hipMalloc(&dev_instCntPerIssuType, memSize));
+  gpuErrchk(hipMemcpy(dev_instCntPerIssuType, instCntPerIssuType_, memSize,
+		       hipMemcpyHostToDevice));
   dev_ACOSchedulr->instCntPerIssuType_ = dev_instCntPerIssuType;
   // set root/leaf inst
   dev_ACOSchedulr->rootInst_ = dev_DDG_->GetRootInst();
@@ -1193,8 +1191,8 @@ void ACOScheduler::CopyPointersToDevice(ACOScheduler *dev_ACOSchedulr) {
   // Allocate elmnts_ and keys_ for all PArrayLists
   InstCount *dev_elmnts, *dev_keys;
   memSize = sizeof(InstCount) * count_ * NUMTHREADS;
-  gpuErrchk(cudaMalloc(&dev_elmnts, memSize));
-  gpuErrchk(cudaMalloc(&dev_keys, memSize));
+  gpuErrchk(hipMalloc(&dev_elmnts, memSize));
+  gpuErrchk(hipMalloc(&dev_keys, memSize));
   // set correct maxSize, elmnts_, and keys_ for each PArrayList
   for (int i = 0; i < NUMTHREADS; i++) {
     temp[i].maxSize_ = count_;
@@ -1204,14 +1202,14 @@ void ACOScheduler::CopyPointersToDevice(ACOScheduler *dev_ACOSchedulr) {
   // Alloc dev mem and copy array of PArrayLists to device
   PriorityArrayList<InstCount, InstCount> *dev_array;
   memSize = sizeof(PriorityArrayList<InstCount, InstCount>) * NUMTHREADS;
-  gpuErrchk(cudaMallocManaged(&dev_array, memSize));
-  gpuErrchk(cudaMemcpy(dev_array, temp, memSize, cudaMemcpyHostToDevice));
+  gpuErrchk(hipMallocManaged(&dev_array, memSize));
+  gpuErrchk(hipMemcpy(dev_array, temp, memSize, hipMemcpyHostToDevice));
   // set dev_instsWithPrdcsrsScheduld_ pointers to each PAL in array
   for (int i = 0; i < NUMTHREADS; i++)
     dev_instsWithPrdcsrsSchduld_[i] = &dev_array[i];
   // make sure host also has a copy of array for later deletion
   memSize = sizeof(PriorityArrayList<InstCount, InstCount>) * NUMTHREADS;
-  gpuErrchk(cudaMemPrefetchAsync(dev_array, memSize, cudaCpuDeviceId));
+  gpuErrchk(hipMemPrefetchAsync(dev_array, memSize, hipCpuDeviceId));
   // remove references to dev arrays in host copy and delete host copy
   for (int i = 0; i < NUMTHREADS; i++) {
     temp[i].elmnts_ = NULL;
@@ -1219,71 +1217,45 @@ void ACOScheduler::CopyPointersToDevice(ACOScheduler *dev_ACOSchedulr) {
   }
   delete[] temp;
 
-/* old method
-  // Create temp PriorityArrayList to copy to dev_instsWithPrdcsrsSchduld_
-  Logger::Info("Copying ACO dev_instsWithPrdscsrsSchduld_");
-  PriorityArrayList<InstCount, InstCount> *temp;
-  temp = new 
-	PriorityArrayList<InstCount, InstCount>(dataDepGraph_->GetInstCnt());
-  // Allocate and Copy PriorityArrayList for each thread
-  for (int i = 0; i < NUMTHREADS; i++) {
-    memSize = sizeof(PriorityArrayList<InstCount, InstCount>);
-    gpuErrchk(cudaMallocManaged(&dev_instsWithPrdcsrsSchduld_[i], memSize));
-    gpuErrchk(cudaMemcpy(dev_instsWithPrdcsrsSchduld_[i], temp, memSize,
-			cudaMemcpyHostToDevice));
-    // Allocate dev mem for elmnts_ and keys_
-    memSize = sizeof(InstCount) * dataDepGraph_->GetInstCnt();
-    gpuErrchk(cudaMalloc(&dev_instsWithPrdcsrsSchduld_[i]->elmnts_, memSize));
-    gpuErrchk(cudaMalloc(&dev_instsWithPrdcsrsSchduld_[i]->keys_, memSize));
-    // make sure mallocManaged memory is copied to device before kernel start
-    memSize = sizeof(PriorityArrayList<InstCount, InstCount>);
-    gpuErrchk(cudaMemPrefetchAsync(dev_instsWithPrdcsrsSchduld_[i], memSize, 0));
-  }
-  delete temp;
-*/
-
   // Copy rdyLst_
   Logger::Info("Copying ACO rdyLst_");
   memSize = sizeof(ReadyList);
-  gpuErrchk(cudaMallocManaged(&dev_ACOSchedulr->dev_rdyLst_, memSize));
-  gpuErrchk(cudaMemcpy(dev_ACOSchedulr->dev_rdyLst_, rdyLst_, memSize,
-		       cudaMemcpyHostToDevice));
+  gpuErrchk(hipMallocManaged(&dev_ACOSchedulr->dev_rdyLst_, memSize));
+  gpuErrchk(hipMemcpy(dev_ACOSchedulr->dev_rdyLst_, rdyLst_, memSize,
+		       hipMemcpyHostToDevice));
   rdyLst_->CopyPointersToDevice(dev_ACOSchedulr->dev_rdyLst_, dev_DDG_,
 		                NUMTHREADS);
-  // make sure cudaMallocManaged memory is copied to device before kernel start
+  // make sure hipMallocManaged memory is copied to device before kernel start
   memSize = sizeof(int16_t *) * NUMTHREADS;
-  gpuErrchk(cudaMemPrefetchAsync(dev_avlblSlotsInCrntCycle_, memSize, 0));
+  gpuErrchk(hipMemPrefetchAsync(dev_avlblSlotsInCrntCycle_, memSize, 0));
   memSize = sizeof(PriorityArrayList<InstCount, InstCount> *) * NUMTHREADS;
-  gpuErrchk(cudaMemPrefetchAsync(dev_instsWithPrdcsrsSchduld_, memSize, 0));
+  gpuErrchk(hipMemPrefetchAsync(dev_instsWithPrdcsrsSchduld_, memSize, 0));
   memSize = sizeof(ReserveSlot *) * NUMTHREADS;
-  gpuErrchk(cudaMemPrefetchAsync(dev_rsrvSlots_, memSize, 0));
+  gpuErrchk(hipMemPrefetchAsync(dev_rsrvSlots_, memSize, 0));
   memSize = sizeof(ReadyList);
-  gpuErrchk(cudaMemPrefetchAsync(&dev_ACOSchedulr->dev_rdyLst_, memSize, 0));
+  gpuErrchk(hipMemPrefetchAsync(&dev_ACOSchedulr->dev_rdyLst_, memSize, 0));
 }
 
 void ACOScheduler::FreeDevicePointers() {
-  cudaFree(dev_schduldInstCnt_);
-  cudaFree(dev_crntCycleNum_);
-  cudaFree(dev_crntSlotNum_);
-  cudaFree(dev_crntRealSlotNum_);
-  cudaFree(dev_isCrntCycleBlkd_);
-  cudaFree(slotsPerTypePerCycle_);
-  cudaFree(instCntPerIssuType_);
+  hipFree(dev_schduldInstCnt_);
+  hipFree(dev_crntCycleNum_);
+  hipFree(dev_crntSlotNum_);
+  hipFree(dev_crntRealSlotNum_);
+  hipFree(dev_isCrntCycleBlkd_);
+  hipFree(slotsPerTypePerCycle_);
+  hipFree(instCntPerIssuType_);
   for (int i = 0; i < NUMTHREADS; i++){
-    //cudaFree(dev_instsWithPrdcsrsSchduld_[i]->elmnts_);
-    //cudaFree(dev_instsWithPrdcsrsSchduld_[i]->keys_);
-    //cudaFree(dev_instsWithPrdcsrsSchduld_[i]);
-    cudaFree(dev_avlblSlotsInCrntCycle_[i]);
-    cudaFree(dev_rsrvSlots_[i]);
+    hipFree(dev_avlblSlotsInCrntCycle_[i]);
+    hipFree(dev_rsrvSlots_[i]);
   }
-  cudaFree(dev_instsWithPrdcsrsSchduld_[0]->elmnts_);
-  cudaFree(dev_instsWithPrdcsrsSchduld_[0]->keys_);
-  cudaFree(dev_instsWithPrdcsrsSchduld_[0]);
+  hipFree(dev_instsWithPrdcsrsSchduld_[0]->elmnts_);
+  hipFree(dev_instsWithPrdcsrsSchduld_[0]->keys_);
+  hipFree(dev_instsWithPrdcsrsSchduld_[0]);
   dev_rdyLst_->FreeDevicePointers(NUMTHREADS);
-  cudaFree(dev_avlblSlotsInCrntCycle_);
-  cudaFree(dev_rsrvSlots_);
-  cudaFree(dev_rsrvSlotCnt_);
-  cudaFree(dev_instsWithPrdcsrsSchduld_);
-  cudaFree(dev_rdyLst_);
-  cudaFree(pheromone_.elmnts_);
+  hipFree(dev_avlblSlotsInCrntCycle_);
+  hipFree(dev_rsrvSlots_);
+  hipFree(dev_rsrvSlotCnt_);
+  hipFree(dev_instsWithPrdcsrsSchduld_);
+  hipFree(dev_rdyLst_);
+  hipFree(pheromone_.elmnts_);
 }

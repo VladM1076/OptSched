@@ -17,7 +17,7 @@ Last Update:  Sept. 2013
 #include "opt-sched/Scheduler/machine_model.h"
 #include "opt-sched/Scheduler/register.h"
 #include <iostream>
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
 #include <string.h>
 
 namespace llvm {
@@ -550,7 +550,7 @@ public:
   void CopyPointersToDevice(SchedInstruction *dev_inst, GraphNode **dev_nodes, 
 		            InstCount instCnt, RegisterFile *dev_regFiles, 
                             int numThreads = 0);
-  // Calls cudaFree on all arrays/objects that were allocated with cudaMalloc
+  // Calls hipFree on all arrays/objects that were allocated with hipMalloc
   void FreeDevicePointers(int numThreads);
   // Allocates arrays used for storing individual values for each thread in
   // parallel ACO on device

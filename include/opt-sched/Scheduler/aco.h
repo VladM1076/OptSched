@@ -13,8 +13,8 @@ Last Update:  Jan. 2020
 #include "opt-sched/Scheduler/device_vector.h"
 #include "llvm/ADT/ArrayRef.h"
 #include <memory>
-#include <cuda_runtime.h>
-#include <curand_kernel.h>
+#include <hip/hip_runtime.h>
+#include <hiprand_kernel.h>
 
 namespace llvm {
 namespace opt_sched {
@@ -54,7 +54,7 @@ public:
                bool vrfySched, bool IsPostBB, SchedRegion *dev_rgn = NULL,
 	       DataDepGraph *dev_DDG = NULL,
 	       DeviceVector<Choice> *dev_ready = NULL,
-	       MachineModel *dev_MM = NULL, curandState_t *dev_states = NULL);
+	       MachineModel *dev_MM = NULL, hiprandState_t *dev_states = NULL);
   __host__ __device__
   virtual ~ACOScheduler();
   FUNC_RESULT FindSchedule(InstSchedule *schedule, SchedRegion *region, 
@@ -68,7 +68,7 @@ public:
   void CopyPointersToDevice(ACOScheduler *dev_ACOSchedur);
   // Copies the current pheromone values to device pheromone array
   void CopyPheromonesToDevice(ACOScheduler *dev_AcoSchdulr);
-  // Calls cudaFree on all arrays/objects that were allocated with cudaMalloc
+  // Calls hipFree on all arrays/objects that were allocated with hipMalloc
   void FreeDevicePointers();
   // Allocates device arrays of size NUMTHREADS of dynamic variables to allow
   // each thread to have its own value
@@ -129,7 +129,7 @@ private:
   DeviceVector<Choice> *dev_ready_;
   MachineModel *dev_MM_;
   // Holds state for each thread for RNG
-  curandState_t *dev_states_;
+  hiprandState_t *dev_states_;
   // Used to count how many threads returned last instruction
   int returnLastInstCnt_;
   // Used to count how many ants are terminated early

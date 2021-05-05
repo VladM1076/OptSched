@@ -250,7 +250,7 @@ void GraphNode::FindRcrsvNghbrs_(GraphNode *root, DIRECTION dir,
     BitVector *thisBitVector = this->GetRcrsvNghbrBitVector(dir);
     if (thisBitVector && thisBitVector->GetBit(root->GetNum()) == true) {
       graph->CycleDetected();
-#ifdef __CUDA_ARCH__
+#if __HIP_DEVICE_COMPILE__
       printf("Detected a cycle between nodes %d and %d in graph\n", 
 		      root->GetNum(), this->GetNum());
 #else
@@ -367,11 +367,11 @@ void GraphNode::CopyPointersToDevice(GraphNode *dev_node, GraphNode **dev_nodes,
   // Copy scsrLst_ to device
   PriorityArrayList<GraphEdge *> *dev_scsrLst;
   memSize = sizeof(PriorityArrayList<GraphEdge *>);
-  gpuErrchk(cudaMallocManaged(&dev_scsrLst, memSize));
-  gpuErrchk(cudaMemcpy(dev_scsrLst, scsrLst_, memSize, cudaMemcpyHostToDevice));
-  gpuErrchk(cudaMemcpy(&dev_node->scsrLst_, &dev_scsrLst,
+  gpuErrchk(hipMallocManaged(&dev_scsrLst, memSize));
+  gpuErrchk(hipMemcpy(dev_scsrLst, scsrLst_, memSize, hipMemcpyHostToDevice));
+  gpuErrchk(hipMemcpy(&dev_node->scsrLst_, &dev_scsrLst,
 		       sizeof(PriorityArrayList<GraphEdge *> *),
-		       cudaMemcpyHostToDevice));
+		       hipMemcpyHostToDevice));
   // Copy elmnts_ and keys
   unsigned long *dev_keys;
   GraphEdge **dev_edges;
@@ -379,78 +379,78 @@ void GraphNode::CopyPointersToDevice(GraphNode *dev_node, GraphNode **dev_nodes,
   GraphEdge *host_edge;
   if (scsrLst_->maxSize_ > 0) {
     memSize = sizeof(unsigned long) * scsrLst_->maxSize_;
-    gpuErrchk(cudaMalloc(&dev_keys, memSize));
-    gpuErrchk(cudaMemcpy(dev_keys, scsrLst_->keys_, memSize,
-			 cudaMemcpyHostToDevice));
-    gpuErrchk(cudaMemcpy(&dev_node->scsrLst_->keys_, &dev_keys,
-			 sizeof(unsigned long *), cudaMemcpyHostToDevice));
+    gpuErrchk(hipMalloc(&dev_keys, memSize));
+    gpuErrchk(hipMemcpy(dev_keys, scsrLst_->keys_, memSize,
+			 hipMemcpyHostToDevice));
+    gpuErrchk(hipMemcpy(&dev_node->scsrLst_->keys_, &dev_keys,
+			 sizeof(unsigned long *), hipMemcpyHostToDevice));
     memSize = sizeof(GraphEdge *) * scsrLst_->maxSize_;
-    gpuErrchk(cudaMallocManaged(&dev_edges, memSize));
-    gpuErrchk(cudaMemcpy(dev_edges, scsrLst_->elmnts_, memSize,
-			 cudaMemcpyHostToDevice));
-    gpuErrchk(cudaMemcpy(&dev_node->scsrLst_->elmnts_, &dev_edges,
-			 sizeof(GraphEdge **), cudaMemcpyHostToDevice));
+    gpuErrchk(hipMallocManaged(&dev_edges, memSize));
+    gpuErrchk(hipMemcpy(dev_edges, scsrLst_->elmnts_, memSize,
+			 hipMemcpyHostToDevice));
+    gpuErrchk(hipMemcpy(&dev_node->scsrLst_->elmnts_, &dev_edges,
+			 sizeof(GraphEdge **), hipMemcpyHostToDevice));
     // Copy all GraphEdges to device
     memSize = sizeof(GraphEdge) * scsrLst_->size_;
-    // Alloc host and dev mem to prepare all GraphEdges for one cudaCopy
+    // Alloc host and dev mem to prepare all GraphEdges for one hipCopy
     host_edge = (GraphEdge *)malloc(memSize);
-    gpuErrchk(cudaMalloc(&dev_edge, memSize));
+    gpuErrchk(hipMalloc(&dev_edge, memSize));
     // prepare host array of edges
     memSize = sizeof(GraphEdge);
     for (InstCount i = 0; i < scsrLst_->size_; i++)
       memcpy(&host_edge[i], scsrLst_->elmnts_[i], memSize);
     // copy host array to device array, delete host array
     memSize = sizeof(GraphEdge) * scsrLst_->size_;
-    gpuErrchk(cudaMemcpy(dev_edge, host_edge, memSize, cudaMemcpyHostToDevice));
+    gpuErrchk(hipMemcpy(dev_edge, host_edge, memSize, hipMemcpyHostToDevice));
     free(host_edge);
     // update elmnts_ pointers to dev array
     for (InstCount i = 0; i < scsrLst_->size_; i++)
       dev_edges[i] = &dev_edge[i];
     // Make sure new dev_edges values are copied before kernel start
     memSize = sizeof(GraphEdge *) * scsrLst_->maxSize_;
-    gpuErrchk(cudaMemPrefetchAsync(dev_edges, memSize, 0));
+    gpuErrchk(hipMemPrefetchAsync(dev_edges, memSize, 0));
   }
   memSize = sizeof(PriorityArrayList<GraphEdge *>);
-  gpuErrchk(cudaMemPrefetchAsync(dev_scsrLst, memSize, 0));
+  gpuErrchk(hipMemPrefetchAsync(dev_scsrLst, memSize, 0));
   // Copy prdcsrLst_ to device
   ArrayList<GraphEdge *> *dev_prdcsrLst;
   memSize = sizeof(ArrayList<GraphEdge *>);
-  gpuErrchk(cudaMallocManaged(&dev_prdcsrLst, memSize));
-  gpuErrchk(cudaMemcpy(dev_prdcsrLst, prdcsrLst_, memSize,
-                       cudaMemcpyHostToDevice));
-  gpuErrchk(cudaMemcpy(&dev_node->prdcsrLst_, &dev_prdcsrLst,
+  gpuErrchk(hipMallocManaged(&dev_prdcsrLst, memSize));
+  gpuErrchk(hipMemcpy(dev_prdcsrLst, prdcsrLst_, memSize,
+                       hipMemcpyHostToDevice));
+  gpuErrchk(hipMemcpy(&dev_node->prdcsrLst_, &dev_prdcsrLst,
                        sizeof(ArrayList<GraphEdge *> *),
-                       cudaMemcpyHostToDevice));
+                       hipMemcpyHostToDevice));
   // Copy elmnts_
   if (prdcsrLst_->maxSize_ > 0) {
     memSize = sizeof(GraphEdge *) * prdcsrLst_->maxSize_;
-    gpuErrchk(cudaMallocManaged(&dev_edges, memSize));
-    gpuErrchk(cudaMemcpy(dev_edges, prdcsrLst_->elmnts_, memSize,
-                         cudaMemcpyHostToDevice));
-    gpuErrchk(cudaMemcpy(&dev_node->prdcsrLst_->elmnts_, &dev_edges,
-                         sizeof(GraphEdge **), cudaMemcpyHostToDevice));
+    gpuErrchk(hipMallocManaged(&dev_edges, memSize));
+    gpuErrchk(hipMemcpy(dev_edges, prdcsrLst_->elmnts_, memSize,
+                         hipMemcpyHostToDevice));
+    gpuErrchk(hipMemcpy(&dev_node->prdcsrLst_->elmnts_, &dev_edges,
+                         sizeof(GraphEdge **), hipMemcpyHostToDevice));
     // Copy all GraphEdges to device
     memSize = sizeof(GraphEdge) * prdcsrLst_->size_;
-    // Alloc host and dev mem to prepare all GraphEdges for one cudaCopy
+    // Alloc host and dev mem to prepare all GraphEdges for one hipCopy
     host_edge = (GraphEdge *)malloc(memSize);
-    gpuErrchk(cudaMalloc(&dev_edge, memSize));
+    gpuErrchk(hipMalloc(&dev_edge, memSize));
     // prepare host array of edges
     memSize = sizeof(GraphEdge);
     for (InstCount i = 0; i < prdcsrLst_->size_; i++)
       memcpy(&host_edge[i], prdcsrLst_->elmnts_[i], memSize);
     // copy host array to device array, delete host array
     memSize = sizeof(GraphEdge) * prdcsrLst_->size_;
-    gpuErrchk(cudaMemcpy(dev_edge, host_edge, memSize, cudaMemcpyHostToDevice));
+    gpuErrchk(hipMemcpy(dev_edge, host_edge, memSize, hipMemcpyHostToDevice));
     free(host_edge);
     // update elmnts_ pointers to dev array
     for (InstCount i = 0; i < prdcsrLst_->size_; i++)
       dev_edges[i] = &dev_edge[i];
     // Make sure new dev_edges values are copied before kernel start
     memSize = sizeof(GraphEdge *) * prdcsrLst_->maxSize_;
-    gpuErrchk(cudaMemPrefetchAsync(dev_edges, memSize, 0));
+    gpuErrchk(hipMemPrefetchAsync(dev_edges, memSize, 0));
   }
   memSize = sizeof(ArrayList<GraphEdge *>);
-  gpuErrchk(cudaMemPrefetchAsync(dev_prdcsrLst, memSize, 0));
+  gpuErrchk(hipMemPrefetchAsync(dev_prdcsrLst, memSize, 0));
   //Copy BitVector *isRcrsvScsr_
   BitVector *dev_isRcrsvScsr;
   unsigned long *dev_vctr;
@@ -460,15 +460,15 @@ void GraphNode::CopyPointersToDevice(GraphNode *dev_node, GraphNode **dev_nodes,
 
 void GraphNode::FreeDevicePointers() {
   if (scsrLst_) {
-    cudaFree(scsrLst_->elmnts_[0]);
-    cudaFree(scsrLst_->elmnts_);
-    cudaFree(scsrLst_->keys_);
-    cudaFree(scsrLst_);
+    hipFree(scsrLst_->elmnts_[0]);
+    hipFree(scsrLst_->elmnts_);
+    hipFree(scsrLst_->keys_);
+    hipFree(scsrLst_);
   }
   if (prdcsrLst_) {
-    cudaFree(prdcsrLst_->elmnts_[0]);
-    cudaFree(prdcsrLst_->elmnts_);
-    cudaFree(prdcsrLst_);
+    hipFree(prdcsrLst_->elmnts_[0]);
+    hipFree(prdcsrLst_->elmnts_);
+    hipFree(prdcsrLst_);
   }
 }
 
@@ -521,7 +521,7 @@ FUNC_RESULT DirAcycGraph::DepthFirstSearch() {
   root_->DepthFirstVisit(tplgclOrdr_, tplgclIndx);
 
   if (tplgclIndx != -1) {
-#ifdef __CUDA_ARCH__
+#if __HIP_DEVICE_COMPILE__
     printf("Invalid DAG Format: Ureachable nodes\n");
 #else
     Logger::Error("Invalid DAG Format: Ureachable nodes");

@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 #include <algorithm>
 #include <cstdio>
 #include <memory>
@@ -17,7 +18,7 @@
 #include "opt-sched/Scheduler/stats.h"
 #include "opt-sched/Scheduler/utilities.h"
 #include "opt-sched/Scheduler/dev_defines.h"
-#include <cuda_profiler_api.h>
+#include <hip/hip_profile.h>
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
@@ -859,7 +860,7 @@ bool SchedRegion::CmputUprBounds_(InstSchedule *schedule, bool useFileBounds) {
 __host__ __device__
 void SchedRegion::UpdateScheduleCost(InstSchedule *schedule) {
   InstCount crntExecCost;
-#ifdef __CUDA_ARCH__
+#if __HIP_DEVICE_COMPILE__
   ((BBWithSpill *)this)->Dev_CmputNormCost_(schedule, CCM_STTC, crntExecCost, false);
 #else
   CmputNormCost_(schedule, CCM_STTC, crntExecCost, false);
@@ -953,8 +954,8 @@ void SchedRegion::RegAlloc_(InstSchedule *&bestSched, InstSchedule *&lstSched) {
 void SchedRegion::InitSecondPass() { isSecondPass_ = true; }
 
 __global__
-void InitCurand(curandState_t *dev_states, unsigned long seed, int instCnt) {
-  curand_init(seed * GLOBALTID, 0, 0, &dev_states[GLOBALTID]);
+void InitCurand(hiprandState_t *dev_states, unsigned long seed, int instCnt) {
+  hiprand_init(seed * GLOBALTID, 0, 0, &dev_states[GLOBALTID]);
 }
 
 FUNC_RESULT SchedRegion::runACO(InstSchedule *ReturnSched,
@@ -983,18 +984,18 @@ FUNC_RESULT SchedRegion::runACO(InstSchedule *ReturnSched,
     Logger::Info("Copying DDG and its Instruction to device");
     DataDepGraph *dev_DDG;
     memSize = sizeof(DataDepGraph);
-    gpuErrchk(cudaMallocManaged(&dev_DDG, memSize));
-    gpuErrchk(cudaMemcpy(dev_DDG, dataDepGraph_, memSize,
-                         cudaMemcpyHostToDevice));
+    gpuErrchk(hipMallocManaged(&dev_DDG, memSize));
+    gpuErrchk(hipMemcpy(dev_DDG, dataDepGraph_, memSize,
+                         hipMemcpyHostToDevice));
     dataDepGraph_->CopyPointersToDevice(dev_DDG, NUMTHREADS);
     // Copy this(BBWithSpill) to device
     Logger::Info("Copying BBWithSpill to Device");
     BBWithSpill *dev_rgn;
     memSize = sizeof(BBWithSpill);
     // Allocate device mem
-    gpuErrchk(cudaMallocManaged((void**)&dev_rgn, memSize));
+    gpuErrchk(hipMallocManaged((void**)&dev_rgn, memSize));
     // Copy this to device
-    gpuErrchk(cudaMemcpy(dev_rgn, this, memSize, cudaMemcpyHostToDevice));
+    gpuErrchk(hipMemcpy(dev_rgn, this, memSize, hipMemcpyHostToDevice));
     dev_rgn->machMdl_ = dev_machMdl_;
     CopyPointersToDevice(dev_rgn, NUMTHREADS);
     // create an array of DeviceVectors and copy to device for use 
@@ -1005,7 +1006,7 @@ FUNC_RESULT SchedRegion::runACO(InstSchedule *ReturnSched,
     Choice *dev_elmnts;
     // Alloc dev mem for elmnts_ for all vectors
     memSize = dataDepGraph_->GetInstCnt() * sizeof(Choice) * NUMTHREADS;
-    gpuErrchk(cudaMalloc(&dev_elmnts, memSize));
+    gpuErrchk(hipMalloc(&dev_elmnts, memSize));
     // set correct allocation size and elmnts_ dev pointer
     for (int i = 0; i < NUMTHREADS; i++) {
       ready[i].alloc_ = dataDepGraph_->GetInstCnt();
@@ -1013,20 +1014,20 @@ FUNC_RESULT SchedRegion::runACO(InstSchedule *ReturnSched,
     }
     // Alloc dev mem for all dev vectors
     memSize = sizeof(DeviceVector<Choice>) * NUMTHREADS;
-    gpuErrchk(cudaMallocManaged(&dev_ready, memSize));
+    gpuErrchk(hipMallocManaged(&dev_ready, memSize));
     // Copy array of vectors to device
-    gpuErrchk(cudaMemcpy(dev_ready, ready, memSize, cudaMemcpyHostToDevice));
+    gpuErrchk(hipMemcpy(dev_ready, ready, memSize, hipMemcpyHostToDevice));
     // remove device array reference in host copy
     for (int i = 0; i < NUMTHREADS; i++)
       ready[i].elmnts_ = NULL;
     // delete host copy
     delete[] ready;
-    // Allocate dev_states for curand RNG and run curand_init() to initialize
+    // Allocate dev_states for hiprand RNG and run hiprand_init() to initialize
     Logger::Info("Initializing states for cuRand");
-    curandState_t *dev_states;
-    memSize = sizeof(curandState_t) * NUMTHREADS;
-    gpuErrchk(cudaMalloc(&dev_states, memSize));
-    InitCurand<<<NUMBLOCKS, NUMTHREADSPERBLOCK>>>(dev_states, 
+    hiprandState_t *dev_states;
+    memSize = sizeof(hiprandState_t) * NUMTHREADS;
+    gpuErrchk(hipMalloc(&dev_states, memSize));
+    hipLaunchKernelGGL(InitCurand, dim3(NUMBLOCKS), dim3(NUMTHREADSPERBLOCK), 0, 0, dev_states, 
                                                   unsigned(time(NULL)),
                                                   dataDepGraph_->GetInstCnt());
     Logger::Info("Creating ACOScheduler");
@@ -1042,34 +1043,34 @@ FUNC_RESULT SchedRegion::runACO(InstSchedule *ReturnSched,
     Logger::Info("Copying ACOScheduler to device");
     ACOScheduler *dev_AcoSchdulr;
     memSize = sizeof(ACOScheduler);
-    gpuErrchk(cudaMallocManaged(&dev_AcoSchdulr, memSize));
-    gpuErrchk(cudaMemcpy(dev_AcoSchdulr, AcoSchdulr, memSize,
-                         cudaMemcpyHostToDevice));
+    gpuErrchk(hipMallocManaged(&dev_AcoSchdulr, memSize));
+    gpuErrchk(hipMemcpy(dev_AcoSchdulr, AcoSchdulr, memSize,
+                         hipMemcpyHostToDevice));
     AcoSchdulr->CopyPointersToDevice(dev_AcoSchdulr);
     // Make sure mallocManaged memory is copied to device before kernel start
     memSize = sizeof(DataDepGraph);
-    gpuErrchk(cudaMemPrefetchAsync(dev_DDG, memSize, 0));
+    gpuErrchk(hipMemPrefetchAsync(dev_DDG, memSize, 0));
     memSize = sizeof(BBWithSpill);
-    gpuErrchk(cudaMemPrefetchAsync(dev_rgn, memSize, 0));
+    gpuErrchk(hipMemPrefetchAsync(dev_rgn, memSize, 0));
 
     // FindSchedule
     Rslt = AcoSchdulr->FindSchedule(ReturnSched, this, dev_AcoSchdulr);
 
     dev_AcoSchdulr->FreeDevicePointers();
-    cudaFree(dev_AcoSchdulr);
+    hipFree(dev_AcoSchdulr);
     delete AcoSchdulr;
-    cudaFree(dev_ready[0].elmnts_);
-    cudaFree(dev_ready);
+    hipFree(dev_ready[0].elmnts_);
+    hipFree(dev_ready);
     dev_rgn->FreeDevicePointers(NUMTHREADS);
-    cudaFree(dev_rgn);
+    hipFree(dev_rgn);
     dev_DDG->FreeDevicePointers(NUMTHREADS);
-    cudaFree(dev_DDG);
-    cudaFree(dev_states);
+    hipFree(dev_DDG);
+    hipFree(dev_states);
     // Ocasionally BBWithSpill deletes an empty pointer, which causes the next
     // kernel to report an invalid argument error after execution even
     // though the non issue error happens here. This call is to clear errors
     // from BBWithSpill deletion.
-    cudaGetLastError();
+    hipGetLastError();
   } else {
     ACOScheduler *AcoSchdulr = 
         new ACOScheduler(dataDepGraph_, machMdl_, abslutSchedUprBound_,

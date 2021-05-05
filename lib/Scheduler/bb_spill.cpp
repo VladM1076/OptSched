@@ -19,7 +19,7 @@
 #include <set>
 #include <sstream>
 #include <utility>
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
 
 #define IS_DEBUG_SLIL_COST_LOWER_BOUND 1
 
@@ -360,7 +360,7 @@ void BBWithSpill::Dev_InitForSchdulng() {
 __host__ __device__
 void BBWithSpill::InitForCostCmputtn_() {
   int i;
-#ifdef __CUDA_ARCH__ // Device version
+#if __HIP_DEVICE_COMPILE__ // Device version
   dev_crntCycleNum_[GLOBALTID] = 0;
   dev_crntSlotNum_[GLOBALTID] = 0;
   dev_crntSpillCost_[GLOBALTID] = 0;
@@ -518,7 +518,7 @@ InstCount BBWithSpill::Dev_CmputCost_(InstSchedule *sched, COST_COMP_MODE compMo
 
 __host__ __device__
 void BBWithSpill::CmputCrntSpillCost_() {
-#ifdef __CUDA_ARCH__ //Device version of function
+#if __HIP_DEVICE_COMPILE__ //Device version of function
   switch (GetSpillCostFunc()) {
   case SCF_PERP:
   case SCF_PRP:
@@ -585,7 +585,7 @@ void BBWithSpill::UpdateSpillInfoForSchdul_(SchedInstruction *inst,
   defCnt = inst->GetDefs(defs);
   useCnt = inst->GetUses(uses);
 
-#ifdef __CUDA_ARCH__ // Device Version of function
+#if __HIP_DEVICE_COMPILE__ // Device Version of function
 #ifdef IS_DEBUG_REG_PRESSURE
   Logger::Info("Updating reg pressure after scheduling Inst %d",
                inst->GetNum());
@@ -1451,7 +1451,7 @@ void BBWithSpill::CmputCnflcts_(InstSchedule *sched) {
 
 __host__ __device__
 InstCount BBWithSpill::GetCrntSpillCost() {
-#ifdef __CUDA_ARCH__ // Device version of function
+#if __HIP_DEVICE_COMPILE__ // Device version of function
   return dev_crntSpillCost_[GLOBALTID];
 #else
   return crntSpillCost_;
@@ -1459,50 +1459,50 @@ InstCount BBWithSpill::GetCrntSpillCost() {
 }
 
 void BBWithSpill::AllocDevArraysForParallelACO(int numThreads) {
-  // Temporarily holds large cudaMalloc arrays as theya re devided
+  // Temporarily holds large hipMalloc arrays as theya re devided
   InstCount *temp;
   unsigned *u_temp;
   size_t memSize = sizeof(InstCount) * numThreads;
-  cudaMalloc(&dev_crntCycleNum_, memSize);
-  cudaMalloc(&dev_crntSlotNum_, memSize);
-  cudaMalloc(&dev_crntSpillCost_, memSize);
-  cudaMalloc(&dev_crntStepNum_, memSize);
-  cudaMalloc(&dev_peakSpillCost_, memSize);
-  cudaMalloc(&dev_totSpillCost_, memSize);
+  hipMalloc(&dev_crntCycleNum_, memSize);
+  hipMalloc(&dev_crntSlotNum_, memSize);
+  hipMalloc(&dev_crntSpillCost_, memSize);
+  hipMalloc(&dev_crntStepNum_, memSize);
+  hipMalloc(&dev_peakSpillCost_, memSize);
+  hipMalloc(&dev_totSpillCost_, memSize);
   // SLIL not used on device
-  //cudaMalloc(&dev_slilSpillCost_, memSize);
-  //cudaMalloc(&dev_dynamicSlilLowerBound_, memSize);
+  //hipMalloc(&dev_slilSpillCost_, memSize);
+  //hipMalloc(&dev_dynamicSlilLowerBound_, memSize);
   memSize = sizeof(int) * numThreads;
-  cudaMalloc(&dev_schduldEntryInstCnt_, memSize);
-  cudaMalloc(&dev_schduldExitInstCnt_, memSize);
-  cudaMalloc(&dev_schduldInstCnt_, memSize);
+  hipMalloc(&dev_schduldEntryInstCnt_, memSize);
+  hipMalloc(&dev_schduldExitInstCnt_, memSize);
+  hipMalloc(&dev_schduldInstCnt_, memSize);
   memSize = sizeof(WeightedBitVector *) * numThreads;
-  cudaMallocManaged(&dev_liveRegs_, memSize);
-  cudaMallocManaged(&dev_livePhysRegs_, memSize);
+  hipMallocManaged(&dev_liveRegs_, memSize);
+  hipMallocManaged(&dev_livePhysRegs_, memSize);
   memSize = sizeof(InstCount *) * numThreads;
-  cudaMallocManaged(&dev_peakRegPressures_, memSize);
+  hipMallocManaged(&dev_peakRegPressures_, memSize);
   memSize = sizeof(InstCount) * regTypeCnt_ * numThreads;
-  cudaMalloc(&temp, memSize);
+  hipMalloc(&temp, memSize);
   for (int i = 0; i < numThreads; i++)
     dev_peakRegPressures_[i] = &temp[i * regTypeCnt_];
   memSize = sizeof(unsigned *) * numThreads;
-  cudaMallocManaged(&dev_regPressures_, memSize);
+  hipMallocManaged(&dev_regPressures_, memSize);
   memSize = sizeof(unsigned) * regTypeCnt_ * numThreads;
-  cudaMalloc(&u_temp, memSize);
+  hipMalloc(&u_temp, memSize);
   for (int i = 0; i < numThreads; i++)
     dev_regPressures_[i] = &u_temp[i * regTypeCnt_];
   memSize = sizeof(InstCount *) * numThreads;
-  cudaMallocManaged(&dev_spillCosts_, memSize);
+  hipMallocManaged(&dev_spillCosts_, memSize);
   memSize = sizeof(InstCount) * dataDepGraph_->GetInstCnt() * numThreads;
-  cudaMalloc(&temp, memSize);
+  hipMalloc(&temp, memSize);
   for (int i = 0; i < numThreads; i++)
     dev_spillCosts_[i] = &temp[i * dataDepGraph_->GetInstCnt()];
 /* SLIL not used on device
   memSize = sizeof(int *) * numThreads;
-  cudaMallocManaged(&dev_sumOfLiveIntervalLengths_, memSize);
+  hipMallocManaged(&dev_sumOfLiveIntervalLengths_, memSize);
   memSize = sizeof(int) * regTypeCnt_;
   for (int i = 0; i < numThreads; i++)
-    cudaMalloc(&dev_sumOfLiveIntervalLengths_[i], memSize);
+    hipMalloc(&dev_sumOfLiveIntervalLengths_[i], memSize);
 */
 }
 
@@ -1535,24 +1535,24 @@ void BBWithSpill::CopyPointersToDevice(SchedRegion* dev_rgn, int numThreads) {
   // allocate array for all threads
   memSize = regTypeCnt_ * sizeof(WeightedBitVector) * numThreads;
   // allocate dev mem
-  gpuErrchk(cudaMallocManaged((void**)&dev_liveRegs, memSize));
+  gpuErrchk(hipMallocManaged((void**)&dev_liveRegs, memSize));
   temp_bv = (WeightedBitVector *)malloc(memSize);
   // Copy WBV and vctr array for each thread
   memSize = regTypeCnt_ * sizeof(WeightedBitVector);
   for (int j = 0; j < numThreads; j++) 
     memcpy(&temp_bv[j * regTypeCnt_], liveRegs_, memSize);
   memSize = regTypeCnt_ * sizeof(WeightedBitVector) * numThreads;
-  gpuErrchk(cudaMemcpy(dev_liveRegs, temp_bv, memSize, 
-                       cudaMemcpyHostToDevice));
+  gpuErrchk(hipMemcpy(dev_liveRegs, temp_bv, memSize, 
+                       hipMemcpyHostToDevice));
   free(temp_bv);
   // Make sure host has the array of device pointers
   memSize = regTypeCnt_ * sizeof(WeightedBitVector) * numThreads;
-  gpuErrchk(cudaMemPrefetchAsync(dev_liveRegs, memSize, cudaCpuDeviceId));
+  gpuErrchk(hipMemPrefetchAsync(dev_liveRegs, memSize, hipCpuDeviceId));
   // Copy array of vctrs for this thread
   memSize = totUnitCnt * sizeof(unsigned int) * numThreads;
   //allocate device mem
-  gpuErrchk(cudaMalloc((void**)&dev_vctr, memSize));
-  // prepare host array for copy to device with one cudaMemcpy call
+  gpuErrchk(hipMalloc((void**)&dev_vctr, memSize));
+  // prepare host array for copy to device with one hipMemcpy call
   // this part is a bit complex but greatly reduces cuda malloc/copy time
   tmp_vctr = (unsigned int *)malloc(memSize);
   memSize = totUnitCnt * sizeof(unsigned int);
@@ -1560,7 +1560,7 @@ void BBWithSpill::CopyPointersToDevice(SchedRegion* dev_rgn, int numThreads) {
     memcpy(&tmp_vctr[j * totUnitCnt], vctr, memSize);
   //copy vctr to device
   memSize = totUnitCnt * sizeof(unsigned int) * numThreads;
-  gpuErrchk(cudaMemcpy(dev_vctr, tmp_vctr, memSize, cudaMemcpyHostToDevice));
+  gpuErrchk(hipMemcpy(dev_vctr, tmp_vctr, memSize, hipMemcpyHostToDevice));
   indx = 0;
   for (int j = 0; j < numThreads; j++) {
     for (int i = 0; i < regTypeCnt_; i++) {
@@ -1576,7 +1576,7 @@ void BBWithSpill::CopyPointersToDevice(SchedRegion* dev_rgn, int numThreads) {
   free(tmp_vctr);
   // make sure managed mem is copied to device before kernel start
   memSize = regTypeCnt_ * sizeof(WeightedBitVector) * numThreads;
-  gpuErrchk(cudaMemPrefetchAsync(dev_liveRegs, memSize, 0));
+  gpuErrchk(hipMemPrefetchAsync(dev_liveRegs, memSize, 0));
   delete[] vctr;
   // copy livePhysRegs to device
   WeightedBitVector *dev_livePhysRegs = NULL;
@@ -1597,24 +1597,24 @@ void BBWithSpill::CopyPointersToDevice(SchedRegion* dev_rgn, int numThreads) {
   // allocate array for all threads
   memSize = regTypeCnt_ * sizeof(WeightedBitVector) * numThreads;
   // allocate dev mem and host mem to copy with one call
-  gpuErrchk(cudaMallocManaged((void**)&dev_livePhysRegs, memSize));
+  gpuErrchk(hipMallocManaged((void**)&dev_livePhysRegs, memSize));
   temp_bv = (WeightedBitVector *)malloc(memSize);
   // Copy WBV and vctr array for each thread
   memSize = regTypeCnt_ * sizeof(WeightedBitVector);
   for (int j = 0; j < numThreads; j++)
     memcpy(&temp_bv[j * regTypeCnt_], livePhysRegs_, memSize);
   memSize = regTypeCnt_ * sizeof(WeightedBitVector) * numThreads;
-  gpuErrchk(cudaMemcpy(dev_livePhysRegs, temp_bv, memSize, 
-                       cudaMemcpyHostToDevice));
+  gpuErrchk(hipMemcpy(dev_livePhysRegs, temp_bv, memSize, 
+                       hipMemcpyHostToDevice));
   free(temp_bv);
   // Make sure host has the array of device pointers
   memSize = regTypeCnt_ * sizeof(WeightedBitVector) * numThreads;
-  gpuErrchk(cudaMemPrefetchAsync(dev_livePhysRegs, memSize, cudaCpuDeviceId));
+  gpuErrchk(hipMemPrefetchAsync(dev_livePhysRegs, memSize, hipCpuDeviceId));
   // Copy array of vctrs for this thread
   memSize = totUnitCnt * sizeof(unsigned int) * numThreads;
   //allocate device mem
-  gpuErrchk(cudaMalloc((void**)&dev_vctr, memSize));
-  // prepare host array for copy to device with one cudaMemcpy call
+  gpuErrchk(hipMalloc((void**)&dev_vctr, memSize));
+  // prepare host array for copy to device with one hipMemcpy call
   // This section is a bit complex but greatly reduces cuda malloc/copy times
   tmp_vctr = (unsigned int *)malloc(memSize);
   memSize = totUnitCnt * sizeof(unsigned int);
@@ -1622,7 +1622,7 @@ void BBWithSpill::CopyPointersToDevice(SchedRegion* dev_rgn, int numThreads) {
     memcpy(&tmp_vctr[j * totUnitCnt], vctr, memSize);
   //copy vctr to device
   memSize = totUnitCnt * sizeof(unsigned int) * numThreads;
-  gpuErrchk(cudaMemcpy(dev_vctr, tmp_vctr, memSize, cudaMemcpyHostToDevice));
+  gpuErrchk(hipMemcpy(dev_vctr, tmp_vctr, memSize, hipMemcpyHostToDevice));
   indx = 0; 
   for (int j = 0; j < numThreads; j++) {
     for (int i = 0; i < regTypeCnt_; i++) {
@@ -1639,21 +1639,21 @@ void BBWithSpill::CopyPointersToDevice(SchedRegion* dev_rgn, int numThreads) {
   free(tmp_vctr);
   // make sure managed mem is copied to device before kernel start
   memSize = regTypeCnt_ * sizeof(WeightedBitVector) * numThreads;
-  gpuErrchk(cudaMemPrefetchAsync(dev_livePhysRegs, memSize, 0));
+  gpuErrchk(hipMemPrefetchAsync(dev_livePhysRegs, memSize, 0));
   delete[] vctr;
   // make sure managed mem is copied to device before kernel start
   memSize = sizeof(WeightedBitVector *) * numThreads;
-  gpuErrchk(cudaMemPrefetchAsync(dev_liveRegs_, memSize, 0));
-  gpuErrchk(cudaMemPrefetchAsync(dev_livePhysRegs_, memSize, 0));
+  gpuErrchk(hipMemPrefetchAsync(dev_liveRegs_, memSize, 0));
+  gpuErrchk(hipMemPrefetchAsync(dev_livePhysRegs_, memSize, 0));
   memSize = sizeof(InstCount *) * numThreads;
-  gpuErrchk(cudaMemPrefetchAsync(dev_peakRegPressures_, memSize, 0));
+  gpuErrchk(hipMemPrefetchAsync(dev_peakRegPressures_, memSize, 0));
   memSize = sizeof(unsigned *) * numThreads;
-  gpuErrchk(cudaMemPrefetchAsync(dev_regPressures_, memSize, 0));
+  gpuErrchk(hipMemPrefetchAsync(dev_regPressures_, memSize, 0));
   memSize = sizeof(InstCount *) * numThreads;
-  gpuErrchk(cudaMemPrefetchAsync(dev_spillCosts_, memSize, 0));
+  gpuErrchk(hipMemPrefetchAsync(dev_spillCosts_, memSize, 0));
   // SLIL not used on GPU
   //memSize = sizeof(int *) * numThreads;
-  //gpuErrchk(cudaMemPrefetchAsync(dev_sumOfLiveIntervalLengths_, memSize, 0));
+  //gpuErrchk(hipMemPrefetchAsync(dev_sumOfLiveIntervalLengths_, memSize, 0));
 }
 
 void BBWithSpill::UpdateSpillInfoFromDevice(BBWithSpill *dev_rgn) {
@@ -1664,30 +1664,30 @@ void BBWithSpill::UpdateSpillInfoFromDevice(BBWithSpill *dev_rgn) {
 }
 
 void BBWithSpill::FreeDevicePointers(int numThreads) {
-  cudaFree(dev_liveRegs_[0][0].vctr_);
-  cudaFree(dev_liveRegs_[0]);
-  cudaFree(dev_livePhysRegs_[0][0].vctr_);
-  cudaFree(dev_livePhysRegs_[0]);
-  cudaFree(dev_livePhysRegs_);
-  cudaFree(dev_liveRegs_);
-  cudaFree(dev_crntCycleNum_);
-  cudaFree(dev_crntSlotNum_);
-  cudaFree(dev_crntSpillCost_);
-  cudaFree(dev_crntStepNum_);
-  cudaFree(dev_peakSpillCost_);
-  cudaFree(dev_totSpillCost_);
-  //cudaFree(dev_slilSpillCost_);
-  //cudaFree(dev_dynamicSlilLowerBound_);
-  cudaFree(dev_schduldEntryInstCnt_);
-  cudaFree(dev_schduldExitInstCnt_);
-  cudaFree(dev_schduldInstCnt_);
-  cudaFree(dev_liveRegs_);
-  cudaFree(dev_livePhysRegs_);
-  cudaFree(dev_peakRegPressures_[0]);
-  cudaFree(dev_peakRegPressures_);
-  cudaFree(dev_regPressures_[0]);
-  cudaFree(dev_regPressures_);
-  cudaFree(dev_spillCosts_[0]);
-  cudaFree(dev_spillCosts_);
-  //cudaFree(dev_sumOfLiveIntervalLengths_);
+  hipFree(dev_liveRegs_[0][0].vctr_);
+  hipFree(dev_liveRegs_[0]);
+  hipFree(dev_livePhysRegs_[0][0].vctr_);
+  hipFree(dev_livePhysRegs_[0]);
+  hipFree(dev_livePhysRegs_);
+  hipFree(dev_liveRegs_);
+  hipFree(dev_crntCycleNum_);
+  hipFree(dev_crntSlotNum_);
+  hipFree(dev_crntSpillCost_);
+  hipFree(dev_crntStepNum_);
+  hipFree(dev_peakSpillCost_);
+  hipFree(dev_totSpillCost_);
+  //hipFree(dev_slilSpillCost_);
+  //hipFree(dev_dynamicSlilLowerBound_);
+  hipFree(dev_schduldEntryInstCnt_);
+  hipFree(dev_schduldExitInstCnt_);
+  hipFree(dev_schduldInstCnt_);
+  hipFree(dev_liveRegs_);
+  hipFree(dev_livePhysRegs_);
+  hipFree(dev_peakRegPressures_[0]);
+  hipFree(dev_peakRegPressures_);
+  hipFree(dev_regPressures_[0]);
+  hipFree(dev_regPressures_);
+  hipFree(dev_spillCosts_[0]);
+  hipFree(dev_spillCosts_);
+  //hipFree(dev_sumOfLiveIntervalLengths_);
 }
