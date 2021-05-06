@@ -1,10 +1,14 @@
 cmake_minimum_required(VERSION 3.4.3)
 
+project(OptSched LANGUAGES CXX)
+
 set(CMAKE_MODULE_PATH "/opt/rocm/hip/cmake" ${CMAKE_MODULE_PATH})
 find_package(HIP)
-#HIP_PATH ?= $(shell hipconfig --path)
-project(OptSched LANGUAGES CXX CUDA HIP)
-#include_directories("${CUDA_INCLUDE_DIRS}")
+if(HIP_FOUND)
+    message(STATUS "Found HIP: " ${HIP_VERSION})
+else()
+    message(FATAL_ERROR "Could not find HIP. Ensure that HIP is either installed in /opt/rocm/hip or the variable HIP_PATH is set to point to the right location.")
+endif()
 
 include(CTest)
 
@@ -30,9 +34,6 @@ SET(OPT_SCHED_DEBUG_FLAGS "")
 SET(CMAKE_CXX_FLAGS_DEBUG " -DIS_DEBUG")
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OPT_SCHED_DEBUG_FLAGS}")
 
-#SET(CUDA_SEPARABLE_COMPILATION ON)
-#SET(CMAKE_POSITION_INDEPENDENT_CODE ON)
-
 IF(CMAKE_BUILD_TYPE EQUAL "DEBUG")
   set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 ENDIF()
@@ -41,7 +42,7 @@ set(OPTSCHED_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(OPTSCHED_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
 # OptSched sources
-SET(OPT_SCHED_SRCS Scheduler/aco.hip.cpp
+SET(OPT_SCHED_SRCS Scheduler/aco.cpp
   Scheduler/bb_spill.cpp
   Scheduler/buffers.cpp
   Scheduler/config.cpp
@@ -67,6 +68,8 @@ SET(OPT_SCHED_SRCS Scheduler/aco.hip.cpp
   Wrapper/OptSchedMachineWrapper.cpp
   Wrapper/OptSchedDDGWrapperBasic.cpp
   Wrapper/OptSchedGenericTarget.cpp)
+
+set_source_files_properties(Scheduler/aco.cpp PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
 
 
 SET(OPT_SCHED_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include)
