@@ -466,13 +466,13 @@ inline bool GraphNode::IsLeaf() const { return scsrLst_->GetElmntCnt() == 0; }
 
 __host__ __device__
 inline void GraphNode::ApndScsr(GraphEdge *edge) {
-  assert(edge->from == this);
+  assert(edge->from == this->GetNum());
   scsrLst_->InsrtElmnt(edge, edge->to, true);
 }
 
 __host__ __device__
 inline void GraphNode::AddScsr(GraphEdge *edge) {
-  assert(edge->from == this);
+  assert(edge->from == this->GetNum());
   UDT_GEDGES scsrNum = scsrLst_->GetElmntCnt();
   scsrLst_->InsrtElmnt(edge, edge->to, true);
   edge->succOrder = scsrNum;
@@ -516,8 +516,8 @@ inline void GraphNode::UpdtMaxEdgLbl(UDT_GLABEL label) {
 __host__ __device__
 inline void GraphNode::RmvLastScsr(GraphNode *scsr, bool delEdg) {
   assert(scsrLst_->GetElmntCnt() > 0);
-  assert(scsrLst_->GetLastElmnt()->to == scsr);
-  assert(scsrLst_->GetLastElmnt()->from == this);
+  assert(scsrLst_->GetLastElmnt()->to == scsr->GetNum());
+  assert(scsrLst_->GetLastElmnt()->from == this->GetNum());
   if (delEdg)
     delete scsrLst_->GetLastElmnt();
   scsrLst_->RmvLastElmnt();
@@ -525,13 +525,13 @@ inline void GraphNode::RmvLastScsr(GraphNode *scsr, bool delEdg) {
 
 __host__ __device__
 inline void GraphNode::ApndPrdcsr(GraphEdge *edge) {
-  assert(edge->to == this);
+  assert(edge->to == this->GetNum());
   prdcsrLst_->InsrtElmnt(edge);
 }
 
 __host__ __device__
 inline void GraphNode::AddPrdcsr(GraphEdge *edge) {
-  assert(edge->to == this);
+  assert(edge->to == this->GetNum());
   UDT_GEDGES prdcsrNum = prdcsrLst_->GetElmntCnt();
   prdcsrLst_->InsrtElmnt(edge);
   edge->predOrder = prdcsrNum;
@@ -541,8 +541,8 @@ inline void GraphNode::AddPrdcsr(GraphEdge *edge) {
 __host__ __device__
 inline void GraphNode::RmvLastPrdcsr(GraphNode *prdcsr, bool delEdg) {
   assert(prdcsrLst_->GetElmntCnt() > 0);
-  assert(prdcsrLst_->GetLastElmnt()->from == prdcsr);
-  assert(prdcsrLst_->GetLastElmnt()->to == this);
+  assert(prdcsrLst_->GetLastElmnt()->from == prdcsr->GetNum());
+  assert(prdcsrLst_->GetLastElmnt()->to == this->GetNum());
   if (delEdg)
     delete prdcsrLst_->GetLastElmnt();
   prdcsrLst_->RmvLastElmnt();

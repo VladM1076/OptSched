@@ -33,6 +33,7 @@ SET(OPT_SCHED_DEBUG_FLAGS "")
 # If asserts are enabled opt-sched must be built with "IS_DEBUG".
 SET(CMAKE_CXX_FLAGS_DEBUG " -DIS_DEBUG")
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OPT_SCHED_DEBUG_FLAGS}")
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D__HIP_PLATFORM_NVCC__")
 
 IF(CMAKE_BUILD_TYPE EQUAL "DEBUG")
   set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -99,6 +100,8 @@ IF("AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
                                 ${CMAKE_CURRENT_BINARY_DIR}/../../lib/Target/AMDGPU)
   ENDIF()
 ENDIF()
+
+SET(OPT_SCHED_INCLUDE_DIRS ${OPT_SCHED_INCLUDE_DIRS} /opt/rocm/hiprand/include)
 
 include_directories(${OPT_SCHED_INCLUDE_DIRS})
 add_subdirectory(lib)
