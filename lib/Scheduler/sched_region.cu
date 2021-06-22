@@ -961,6 +961,8 @@ FUNC_RESULT SchedRegion::runACO(InstSchedule *ReturnSched,
                                 InstSchedule *InitSched, bool IsPostBB) {
   InitForSchdulng();
   FUNC_RESULT Rslt;
+  bool BackupNeedsLB = needsSLILLowerBound();
+  //setNeedsSLILLowerBound(false);
   // Num of edges are used to filter out the few regions that are too large
   // to fit in device memory
   Logger::Info("This DDG has %d edges", dataDepGraph_->GetEdgeCnt());
@@ -1074,5 +1076,6 @@ FUNC_RESULT SchedRegion::runACO(InstSchedule *ReturnSched,
     Rslt = AcoSchdulr->FindSchedule(ReturnSched, this);
     delete AcoSchdulr;
   }
+  setNeedsSLILLowerBound(BackupNeedsLB);
   return Rslt;
 }

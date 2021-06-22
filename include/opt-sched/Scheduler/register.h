@@ -32,7 +32,7 @@ public:
   __host__ __device__
   Register(int16_t type = 0, int num = 0, int physicalNumber = INVALID_VALUE);
 
-  using InstSetType = DevicePtrSet<InstCount>;
+  using InstSetType = DeviceSet<InstCount>;
 
   __host__ __device__
   int16_t GetType() const;

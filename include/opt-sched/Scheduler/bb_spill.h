@@ -13,6 +13,7 @@ Last Update:  Apr. 2011
 #include "opt-sched/Scheduler/defines.h"
 #include "opt-sched/Scheduler/sched_region.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/SmallSet.h"
 #include <map>
 #include <set>
 #include <vector>
@@ -71,6 +72,12 @@ private:
   int **dev_sumOfLiveIntervalLengths_;
 
   InstCount staticSlilLowerBound_ = 0;
+
+  // Vector for tracking the registers that are live. This is used to make SLIL
+  // faster.
+  std::vector<SmallSet<int, 32>> SLILLiveRegIndices;
+  // Device version of above member
+  DeviceSet<int> **dev_SLILLiveRegIndices;
 
   // (Chris): The dynamic lower bound for SLIL is calculated differently from
   // the other cost functions. It is first set when the static lower bound is

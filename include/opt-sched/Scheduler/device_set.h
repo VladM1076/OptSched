@@ -1,11 +1,11 @@
-//  (VLAD) Created my own class to replace SmallPtrSet in Register class
-//  since SmallPtrSet is not supported on device
+//  (VLAD) Created my own class to replace SmallPtrSet/SmallSet
+//  since SmallPtrSet/SmallSet is not supported on device
 
 template <typename T>
-class DevicePtrSet {
+class DeviceSet {
   public:
     __host__ __device__
-    DevicePtrSet(int size = 0) {
+    DeviceSet(int size = 0) {
       size_ = size;
       alloc_ = size;
 
@@ -15,7 +15,7 @@ class DevicePtrSet {
         elmnt = NULL;
     }
     __host__ __device__
-    ~DevicePtrSet() {
+    ~DeviceSet() {
       if (elmnt)
         delete[] elmnt;
     }
@@ -69,6 +69,23 @@ class DevicePtrSet {
       return false;
     }
 
+    // searches for entry, erases it from array and returns true if found
+    __host__ __device__
+    bool erase (T entry) {
+      bool erased = false;
+      for (int i = 0; i < size_; i++) {
+        if (erased)
+          elmnt[i] = elmnt[i + 1];
+        if (!erased && elmnt[i] == entry) {
+          if (i < size_ - 1)
+            elmnt[i] = elmnt[i + 1];
+          size_--;
+          erased = true;
+        }
+      }
+      return erased;
+    }
+
     __host__ __device__
     T& operator[](int indx) {
       if (indx < size_ && indx >= 0)
@@ -91,31 +108,38 @@ class DevicePtrSet {
         T *ptr;
 
     public:
+        __host__ __device__
         explicit iterator()
             : ptr(nullptr)
         {
         }
+        __host__ __device__
         explicit iterator(T *p)
             : ptr(p)
         {
         }
+        __host__ __device__
         bool operator==(const iterator& rhs) const
         {
             return ptr == rhs.ptr;
         }
+        __host__ __device__
         bool operator!=(const iterator& rhs) const
         {
             return !(*this == rhs);
         }
+        __host__ __device__
         T operator*() const
         {
             return *ptr;
         }
+        __host__ __device__
         iterator& operator++()
         {
             ++ptr;
             return *this;
         }
+        __host__ __device__
         iterator operator++(int)
         {
             iterator temp(*this);
@@ -125,11 +149,13 @@ class DevicePtrSet {
     };
 
     // Begin iterator
+    __host__ __device__
     iterator begin() const {
       return iterator(elmnt);
     }
 
     // End iterator
+    __host__ __device__
     iterator end() const {
       return iterator(elmnt + size_);
     }

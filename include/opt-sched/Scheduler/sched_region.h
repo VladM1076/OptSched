@@ -157,6 +157,9 @@ private:
   // Used for two-pass-optsched to enable second pass functionalies.
   bool isSecondPass_;
 
+  //needs SLIL LowerBound used by aco
+  bool NeedsSLILLowerBound;
+
   // The absolute cost lower bound to be used as a ref for normalized costs.
   InstCount costLwrBound_ = 0;
 
@@ -277,6 +280,11 @@ protected:
   virtual ConstrainedScheduler *AllocHeuristicScheduler_() = 0;
 
   virtual bool EnableEnum_() = 0;
+
+  __host__ __device__
+  void setNeedsSLILLowerBound(bool NeedsLB) { NeedsSLILLowerBound = NeedsLB; }
+  __host__ __device__
+  bool needsSLILLowerBound() { return NeedsSLILLowerBound; }
 
   // Prepares the region for being scheduled.
   virtual void SetupForSchdulng_() = 0;
