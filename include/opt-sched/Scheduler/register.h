@@ -34,6 +34,10 @@ public:
 
   using InstSetType = DeviceSet<InstCount>;
 
+  void setupInstIntervalTracking(int InstrCount);
+  __host__ __device__
+  void resetInstIntervalTracking();
+
   __host__ __device__
   int16_t GetType() const;
   __host__ __device__
@@ -111,13 +115,18 @@ public:
   bool AddToInterval(const SchedInstruction *inst);
   __host__ __device__
   bool IsInInterval(const SchedInstruction *inst) const;
-  const InstSetType &GetLiveInterval() const;
+  const BitVector &GetLiveInterval() const;
 
   // Returns true if an insertion actually occurred.
   bool AddToPossibleInterval(const SchedInstruction *inst);
   __host__ __device__
   bool IsInPossibleInterval(const SchedInstruction *inst) const;
-  const InstSetType &GetPossibleLiveInterval() const;
+  const BitVector &GetPossibleLiveInterval() const;
+
+  // optimized function equivalent to:
+  // IsInInterval(inst) || IsInPossibleInterval(inst)
+  __host__ __device__
+  bool IsInLiveOrPossibleInterval(const SchedInstruction *inst) const;
 
   // Resets liveIntervalSet_ and possibleLiveIntervalSet_ 
   // for reinitialization in the next region
@@ -156,15 +165,21 @@ private:
   InstSetType uses_;
   InstSetType defs_;
 
-  // (Chris): The live interval set is the set of instructions that are
+  // (Chris): The live interval set is the set of instruction ids that are
   // guaranteed to be in this register's live interval. This is computed
   // during the naive and closure static lower bound analysis.
-  InstSetType liveIntervalSet_;
+  BitVector liveIntervalSet_;
 
-  // (Chris): The possible live interval set is the set of instructions that
+  // (Chris): The possible live interval set is the set of instruction ids that
   // may or may not be added to the live interval of this register. This is
   // computed during the common use lower boudn analysis.
-  InstSetType possibleLiveIntervalSet_;
+  BitVector possibleLiveIntervalSet_;
+
+  // (Paul) This is a set that is the union of the live and possibly live
+  // interval sets.  It is here as an optimization.  Since in the hot
+  // function UpdateSpillInfoForSchdul_ the scheduler frequently gets
+  // liveInterval || possibleLiveInterval
+  BitVector liveAndPossiblyLiveIntervalSet;
 };
 
 // Represents a file of registers of a certain type and tracks their usages.
@@ -203,6 +218,10 @@ public:
   __host__ __device__
   void AddConflictsWithLiveRegs(int regNum, int liveRegCnt);
   int GetConflictCnt();
+
+  void setupInstIntervalTracking(int InstrCount);
+  __host__ __device__
+  void resetInstIntervalTracking();
 
   // The number of registers in this register file.
   __host__ __device__

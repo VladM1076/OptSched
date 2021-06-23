@@ -225,6 +225,7 @@ InstSchedule *ACOScheduler::FindOneSchedule(InstCount RPTarget,
   InstSchedule *schedule = dev_schedule;
   InstCount maxPriority = dev_rdyLst_->MaxPriority();
   bool IsSecondPass = dev_rgn_->IsSecondPass();
+  bool needsSLIL = ((BBWithSpill *)dev_rgn_)->needsSLIL();
   if (maxPriority == 0)
     maxPriority = 1; // divide by 0 is bad
   Initialize_();
@@ -332,7 +333,8 @@ InstSchedule *ACOScheduler::FindOneSchedule(InstCount RPTarget,
                                             false);
       // If an ant violates the RP cost constraint, terminate further
       // schedule construction
-      if (((BBWithSpill *)dev_rgn_)->GetCrntSpillCost() > RPTarget) {
+      if (((BBWithSpill *)dev_rgn_)->GetCrntSpillCost() > RPTarget ||
+          needsSLIL && ((BBWithSpill *)dev_rgn_)->GetDynamicLB() > RPTarget) {
         // set schedule cost to INVALID_VALUE so it is not considered for
         // iteration best or global best
         schedule->SetCost(INVALID_VALUE);
@@ -370,6 +372,7 @@ InstSchedule *ACOScheduler::FindOneSchedule(InstCount RPTarget,
   schedule = new InstSchedule(machMdl_, dataDepGraph_, true);
   InstCount maxPriority = rdyLst_->MaxPriority();
   bool IsSecondPass = rgn_->IsSecondPass();
+  bool needsSLIL = ((BBWithSpill *)rgn_)->needsSLIL();
   if (maxPriority == 0)
     maxPriority = 1; // divide by 0 is bad
   Initialize_();
@@ -480,7 +483,8 @@ InstSchedule *ACOScheduler::FindOneSchedule(InstCount RPTarget,
       rgn_->SchdulInst(inst, crntCycleNum_, crntSlotNum_, false);
       // If an ant violates the RP cost constraint, terminate further
       // schedule construction
-      if (((BBWithSpill*)rgn_)->GetCrntSpillCost() > RPTarget) {
+      if (((BBWithSpill*)rgn_)->GetCrntSpillCost() > RPTarget ||
+          needsSLIL && ((BBWithSpill *)rgn_)->GetDynamicLB() > RPTarget) {
         // end schedule construction
         // keep track of ants terminated
         numAntsTerminated_++;
@@ -544,8 +548,8 @@ void Dev_ACO(SchedRegion *dev_rgn, DataDepGraph *dev_DDG,
   // Get RPTarget
   InstCount RPTarget;
 
-  // If in second pass and not using SLIL, set RPTarget
-  if (!needsSLIL)
+  // As long as we are not using SLIL and are in the first pass, set RPTarget
+  if (!needsSLIL || needsSLIL && IsSecondPass)
     RPTarget = dev_bestSched->GetSpillCost();
   else
     RPTarget = INT_MAX;
@@ -617,7 +621,7 @@ void Dev_ACO(SchedRegion *dev_rgn, DataDepGraph *dev_DDG,
                                                 true)) {
         dev_bestSched->Copy(dev_schedules[globalBestIndex]);
         // update RPTarget if we are in second pass and not using SLIL
-        if (!needsSLIL)
+        if (!needsSLIL || needsSLIL && IsSecondPass)
           RPTarget = dev_bestSched->GetSpillCost();
         printf("New best sched found by thread %d\n", globalBestIndex);
         printf("ACO found schedule "
@@ -801,8 +805,10 @@ FUNC_RESULT ACOScheduler::FindSchedule(InstSchedule *schedule_out,
 
   } else { // Run ACO on cpu
     Logger::Info("Running host ACO with %d ants per iteration", NUMTHREADS);
+    bool IsSecondPass = rgn_->IsSecondPass();
+    bool needsSLIL = ((BBWithSpill *)rgn_)->needsSLIL();
     InstCount RPTarget;
-    if (!((BBWithSpill *)rgn_)->needsSLIL())
+    if (!needsSLIL || needsSLIL && IsSecondPass)
       RPTarget = bestSchedule->GetSpillCost();
     else
       RPTarget = MaxRPTarget;
@@ -829,7 +835,7 @@ FUNC_RESULT ACOScheduler::FindSchedule(InstSchedule *schedule_out,
         if (bestSchedule && bestSchedule != InitialSchedule)
           delete bestSchedule;
         bestSchedule = std::move(iterationBest);
-        if (!((BBWithSpill *)rgn_)->needsSLIL())
+        if (!needsSLIL || needsSLIL && IsSecondPass)
           RPTarget = bestSchedule->GetSpillCost();
         printf("ACO found schedule "
                "cost:%d, rp cost:%d, sched length: %d, and "

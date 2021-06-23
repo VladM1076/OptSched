@@ -73,12 +73,6 @@ private:
 
   InstCount staticSlilLowerBound_ = 0;
 
-  // Vector for tracking the registers that are live. This is used to make SLIL
-  // faster.
-  std::vector<SmallSet<int, 32>> SLILLiveRegIndices;
-  // Device version of above member
-  DeviceSet<int> **dev_SLILLiveRegIndices;
-
   // (Chris): The dynamic lower bound for SLIL is calculated differently from
   // the other cost functions. It is first set when the static lower bound is
   // calculated.
@@ -225,6 +219,8 @@ public:
   bool needsSLIL();
   __host__ __device__
   InstCount GetCrntSpillCost();
+  __host__ __device__
+  InstCount GetDynamicLB();
 
 protected:
   // (Chris)

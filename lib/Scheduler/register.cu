@@ -4,6 +4,18 @@
 
 using namespace llvm::opt_sched;
 
+void Register::setupInstIntervalTracking(int InstrCount) {
+  liveIntervalSet_.Construct(InstrCount);
+  possibleLiveIntervalSet_.Construct(InstrCount);
+  liveAndPossiblyLiveIntervalSet.Construct(InstrCount);
+}
+
+void Register::resetInstIntervalTracking() {
+  liveIntervalSet_.Reset();
+  possibleLiveIntervalSet_.Reset();
+  liveAndPossiblyLiveIntervalSet.Reset();
+}
+
 __host__ __device__
 int16_t Register::GetType() const { return type_; }
 
@@ -141,29 +153,42 @@ int Register::GetConflictCnt() const { return conflicts_.GetOneCnt(); }
 bool Register::IsSpillCandidate() const { return isSpillCnddt_; }
 
 bool Register::AddToInterval(const SchedInstruction *inst) {
-  return liveIntervalSet_.insert(inst->GetNum());
+  InstCount instNum = inst->GetNum();
+  bool prevVal = liveIntervalSet_.GetBit(instNum);
+  liveIntervalSet_.SetBit(instNum);
+  liveAndPossiblyLiveIntervalSet.SetBit(instNum);
+  return !prevVal;
 }
 
 __host__ __device__
 bool Register::IsInInterval(const SchedInstruction *inst) const {
-  return liveIntervalSet_.contains(inst->GetNum());
+  return liveIntervalSet_.GetBit(inst->GetNum());
 }
 
-const Register::InstSetType &Register::GetLiveInterval() const {
+const BitVector &Register::GetLiveInterval() const {
   return liveIntervalSet_;
 }
 
 bool Register::AddToPossibleInterval(const SchedInstruction *inst) {
-  return possibleLiveIntervalSet_.insert(inst->GetNum());
+  InstCount instNum = inst->GetNum();
+  bool prevVal = possibleLiveIntervalSet_.GetBit(instNum);
+  possibleLiveIntervalSet_.SetBit(instNum);
+  liveAndPossiblyLiveIntervalSet.SetBit(instNum);
+  return !prevVal;
 }
 
 __host__ __device__
 bool Register::IsInPossibleInterval(const SchedInstruction *inst) const {
-  return possibleLiveIntervalSet_.contains(inst->GetNum());
+  return possibleLiveIntervalSet_.GetBit(inst->GetNum());
 }
 
-const Register::InstSetType &Register::GetPossibleLiveInterval() const {
+const BitVector &Register::GetPossibleLiveInterval() const {
   return possibleLiveIntervalSet_;
+}
+
+__host__ __device__
+bool Register::IsInLiveOrPossibleInterval(const SchedInstruction *inst) const {
+  return liveAndPossiblyLiveIntervalSet.GetBit(inst->GetNum());
 }
 
 __device__
@@ -209,24 +234,34 @@ void Register::CopyPointersToDevice(Register *dev_reg) {
     gpuErrchk(cudaMemcpy(&dev_reg->defs_.elmnt, &dev_elmnt,
                          sizeof(InstCount *), cudaMemcpyHostToDevice));
   }
-  // Copy liveIntervalSet_.elmnt array
-  if (liveIntervalSet_.alloc_ > 0) {
-    memSize = sizeof(InstCount) * liveIntervalSet_.alloc_;
+  // Copy liveIntervalSet_.vctr_ array
+  if (liveIntervalSet_.GetUnitCnt() > 0) {
+    memSize = sizeof(uint) * liveIntervalSet_.GetUnitCnt();
     gpuErrchk(cudaMalloc(&dev_elmnt, memSize));
-    gpuErrchk(cudaMemcpy(dev_elmnt, liveIntervalSet_.elmnt, memSize,
+    gpuErrchk(cudaMemcpy(dev_elmnt, liveIntervalSet_.vctr_, memSize,
                          cudaMemcpyHostToDevice));
-    gpuErrchk(cudaMemcpy(&dev_reg->liveIntervalSet_.elmnt, &dev_elmnt,
-                         sizeof(InstCount *), cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(&dev_reg->liveIntervalSet_.vctr_, &dev_elmnt,
+                         sizeof(uint *), cudaMemcpyHostToDevice));
   }
 
-  // Copy possibleLiveIntervalSet_.elmnt array
-  if (possibleLiveIntervalSet_.alloc_ > 0) {
-    memSize = sizeof(InstCount) * possibleLiveIntervalSet_.alloc_;
+  // Copy possibleLiveIntervalSet_.vctr_ array
+  if (possibleLiveIntervalSet_.GetUnitCnt() > 0) {
+    memSize = sizeof(uint) * possibleLiveIntervalSet_.GetUnitCnt();
     gpuErrchk(cudaMalloc(&dev_elmnt, memSize));
-    gpuErrchk(cudaMemcpy(dev_elmnt, possibleLiveIntervalSet_.elmnt, memSize,
+    gpuErrchk(cudaMemcpy(dev_elmnt, possibleLiveIntervalSet_.vctr_, memSize,
 			 cudaMemcpyHostToDevice));
-    gpuErrchk(cudaMemcpy(&dev_reg->possibleLiveIntervalSet_.elmnt, &dev_elmnt,
-			 sizeof(InstCount *), cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(&dev_reg->possibleLiveIntervalSet_.vctr_, &dev_elmnt,
+			 sizeof(uint *), cudaMemcpyHostToDevice));
+  }
+  
+  // Copy liveAndPossiblyLiveIntervalSet.vctr_ array
+  if (liveAndPossiblyLiveIntervalSet.GetUnitCnt() > 0) {
+    memSize = sizeof(uint) * liveAndPossiblyLiveIntervalSet.GetUnitCnt();
+    gpuErrchk(cudaMalloc(&dev_elmnt, memSize));
+    gpuErrchk(cudaMemcpy(dev_elmnt, liveAndPossiblyLiveIntervalSet.vctr_, memSize,
+                         cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(&dev_reg->liveAndPossiblyLiveIntervalSet.vctr_, &dev_elmnt,
+                         sizeof(uint *), cudaMemcpyHostToDevice));
   }
 }
 
@@ -234,8 +269,9 @@ void Register::FreeDevicePointers() {
   cudaFree(conflicts_.vctr_);
   cudaFree(uses_.elmnt);
   cudaFree(defs_.elmnt);
-  cudaFree(liveIntervalSet_.elmnt);
-  cudaFree(possibleLiveIntervalSet_.elmnt);
+  cudaFree(liveIntervalSet_.vctr_);
+  cudaFree(possibleLiveIntervalSet_.vctr_);
+  cudaFree(liveAndPossiblyLiveIntervalSet.vctr_);
   cudaFree(dev_crntUseCnt_);
 }
 
@@ -372,6 +408,16 @@ int RegisterFile::FindPhysRegCnt() {
 
 __host__ __device__
 int RegisterFile::GetPhysRegCnt() const { return physRegCnt_; }
+
+void RegisterFile::setupInstIntervalTracking(int InstrCount) {
+  for (int i = 0; i < getCount(); i++)
+    Regs[i]->setupInstIntervalTracking(InstrCount);
+}
+
+void RegisterFile::resetInstIntervalTracking() {
+  for (int i = 0; i < getCount(); i++)
+    Regs[i]->resetInstIntervalTracking();
+}
 
 void RegisterFile::SetupConflicts() {
   for (int i = 0; i < getCount(); i++)

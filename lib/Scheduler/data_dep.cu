@@ -268,6 +268,10 @@ FUNC_RESULT DataDepGraph::SetupForSchdulng(bool cmputTrnstvClsr) {
   frwrdLwrBounds_ = new InstCount[instCnt_];
   bkwrdLwrBounds_ = new InstCount[instCnt_];
 
+  for (int i = 0; i < machMdl_->GetRegTypeCnt(); ++i) {
+    RegFiles[i].setupInstIntervalTracking(instCnt_);
+  }
+
   CmputCrtclPaths_();
 
   if (cmputTrnstvClsr) {

@@ -69,8 +69,6 @@ BBWithSpill::BBWithSpill(const OptSchedTarget *OST_, DataDepGraph *dataDepGraph,
   for (int i = 0; i < regTypeCnt_; i++)
     sumOfLiveIntervalLengths_[i] = 0;
 
-  SLILLiveRegIndices.resize(regTypeCnt_);
-
   entryInstCnt_ = 0;
   exitInstCnt_ = 0;
   schduldEntryInstCnt_ = 0;
@@ -258,8 +256,9 @@ static InstCount ComputeSLILStaticLowerBound(int64_t regTypeCnt_,
     for (const auto &p : usedInsts) {
       Logger::Info("  Live interval of Register %d:%d (defined by Inst %d):",
                    p.second->GetType(), p.second->GetNum(), p.first->GetNum());
-      for (const auto &s : p.second->GetLiveInterval()) {
-        Logger::Info("    %d", s->GetNum());
+      for (int s = 0; s < dataDepGraph_->GetInstCnt(); ++s) {
+        if (p.second->IsInInterval(s))
+          Logger::Info("    %d", s);
       }
     }
 #endif
@@ -272,10 +271,8 @@ static InstCount ComputeSLILStaticLowerBound(int64_t regTypeCnt_,
         // If k is not in the live interval of j AND ALSO j is not in the live
         // interval of k, add k to the live interval of j, and increment the
         // lower bound by 1.
-        bool found = jReg->IsInInterval(usedInsts[k].first) ||
-                     kReg->IsInInterval(usedInsts[j].first) ||
-                     jReg->IsInPossibleInterval(usedInsts[k].first) ||
-                     kReg->IsInPossibleInterval(usedInsts[j].first);
+        bool found = jReg->IsInLiveOrPossibleInterval(usedInsts[k].first) ||
+                     kReg->IsInLiveOrPossibleInterval(usedInsts[j].first);
 
         if (!found && usedInsts[j].first != usedInsts[k].first) {
           jReg->AddToPossibleInterval(usedInsts[k].first);
@@ -372,6 +369,8 @@ void BBWithSpill::InitForCostCmputtn_() {
   for (i = 0; i < regTypeCnt_; i++) {
     regFiles_[i].ResetCrntUseCnts();
     regFiles_[i].ResetCrntLngths();
+    // pretty sure this is incorrect
+    //regFiles_[i].resetInstIntervalTracking();
   }
 
   for (i = 0; i < regTypeCnt_; i++) {
@@ -389,7 +388,6 @@ void BBWithSpill::InitForCostCmputtn_() {
   if (needsSLIL()) {
     for (int i = 0; i < regTypeCnt_; i++) {
       dev_sumOfLiveIntervalLengths_[i][GLOBALTID] = 0;
-      dev_SLILLiveRegIndices[i][GLOBALTID].Reset();
     }    
     dev_dynamicSlilLowerBound_[GLOBALTID] = staticSlilLowerBound_;
   }
@@ -405,6 +403,8 @@ void BBWithSpill::InitForCostCmputtn_() {
   for (i = 0; i < regTypeCnt_; i++) {
     regFiles_[i].ResetCrntUseCnts();
     regFiles_[i].ResetCrntLngths();
+    // pretty sure this is incorrect
+    //regFiles_[i].resetInstIntervalTracking();
   }
 
   for (i = 0; i < regTypeCnt_; i++) {
@@ -423,9 +423,6 @@ void BBWithSpill::InitForCostCmputtn_() {
 
   for (int i = 0; i < regTypeCnt_; i++)
     sumOfLiveIntervalLengths_[i] = 0;
-
-  for (auto &i : SLILLiveRegIndices)
-    i.clear();
 
   dynamicSlilLowerBound_ = staticSlilLowerBound_;
 #endif
@@ -610,15 +607,13 @@ void BBWithSpill::UpdateSpillInfoForSchdul_(SchedInstruction *inst,
       // happen here.
       if (needsSLIL()) {
         dev_sumOfLiveIntervalLengths_[regType][GLOBALTID]++;
-        if (needsSLILLowerBound() &&
-            !use->IsInInterval(inst) && !use->IsInPossibleInterval(inst)) {
+        if (needsSLILLowerBound() && !use->IsInLiveOrPossibleInterval(inst)) {
           ++dev_dynamicSlilLowerBound_[GLOBALTID];
         }
       }
 
       //kill register
       dev_liveRegs_[regType][GLOBALTID].SetBit(regNum, false, use->GetWght());
-      dev_SLILLiveRegIndices[regType][GLOBALTID].erase(regNum);
 
 #ifdef IS_DEBUG_REG_PRESSURE
       printf("Reg type %d now has %d live regs\n", regType,
@@ -648,7 +643,6 @@ void BBWithSpill::UpdateSpillInfoForSchdul_(SchedInstruction *inst,
 
     // make register live
     dev_liveRegs_[regType][GLOBALTID].SetBit(regNum, true, def->GetWght());
-    dev_SLILLiveRegIndices[regType][GLOBALTID].insert(regNum);
 
 #ifdef IS_DEBUG_REG_PRESSURE
     printf("Reg type %d now has %d live regs\n", regType,
@@ -686,12 +680,14 @@ void BBWithSpill::UpdateSpillInfoForSchdul_(SchedInstruction *inst,
       dev_sumOfLiveIntervalLengths_[i][GLOBALTID] += 
 	               dev_liveRegs_[i][GLOBALTID].GetOneCnt();
       if (needsSLILLowerBound()) {
-        for (int j : dev_SLILLiveRegIndices[i][GLOBALTID]) {
-          const Register *reg = regFiles_[i].GetReg(j);
-          if (!reg->IsInInterval(inst) && !reg->IsInPossibleInterval(inst)) {
-            ++dev_dynamicSlilLowerBound_[GLOBALTID];
+        for (int j = 0; j < dev_liveRegs_[i][GLOBALTID].GetSize(); ++j) {
+          if (dev_liveRegs_[i][GLOBALTID].GetBit(j)) {
+            const Register *reg = regFiles_[i].GetReg(j);
+            if (!reg->IsInLiveOrPossibleInterval(inst)) {
+              ++dynamicSlilLowerBound_;
+            }
           }
-        } 
+        }
       }
     }
   }
@@ -763,15 +759,13 @@ void BBWithSpill::UpdateSpillInfoForSchdul_(SchedInstruction *inst,
       // happen here.
       if (needsSLIL()) {
         sumOfLiveIntervalLengths_[regType]++;
-        if (needsSLILLowerBound() &&
-            !use->IsInInterval(inst) && !use->IsInPossibleInterval(inst)) {
+        if (needsSLILLowerBound() && !use->IsInLiveOrPossibleInterval(inst)) {
           ++dynamicSlilLowerBound_;
         }
       }
 
       //kill register
       liveRegs_[regType].SetBit(regNum, false, use->GetWght());
-      SLILLiveRegIndices[regType].erase(regNum);
 
 #ifdef IS_DEBUG_REG_PRESSURE
       Logger::Info("Reg type %d now has %d live regs", regType,
@@ -801,7 +795,6 @@ void BBWithSpill::UpdateSpillInfoForSchdul_(SchedInstruction *inst,
 
     // make register live
     liveRegs_[regType].SetBit(regNum, true, def->GetWght());
-    SLILLiveRegIndices[regType].insert(regNum);
 
 #ifdef IS_DEBUG_REG_PRESSURE
     Logger::Info("Reg type %d now has %d live regs", regType,
@@ -839,10 +832,12 @@ void BBWithSpill::UpdateSpillInfoForSchdul_(SchedInstruction *inst,
     if (needsSLIL()) {
       sumOfLiveIntervalLengths_[i] += liveRegs_[i].GetOneCnt();
       if (needsSLILLowerBound()) {
-        for (int j : SLILLiveRegIndices[i]) {
-          const Register *reg = regFiles_[i].GetReg(j);
-          if (!reg->IsInInterval(inst) && !reg->IsInPossibleInterval(inst)) {
-            ++dynamicSlilLowerBound_;
+        for (int j = 0; j < liveRegs_[i].GetSize(); ++j) {
+          if (liveRegs_[i].GetBit(j)) {
+            const Register *reg = regFiles_[i].GetReg(j);
+            if (!reg->IsInLiveOrPossibleInterval(inst)) {
+              ++dynamicSlilLowerBound_;
+            }
           }
         }
       }
@@ -1463,6 +1458,15 @@ InstCount BBWithSpill::GetCrntSpillCost() {
 #endif
 }
 
+__host__ __device__
+InstCount BBWithSpill::GetDynamicLB() {
+#ifdef __CUDA_ARCH__ // Device version of function
+  return dev_dynamicSlilLowerBound_[GLOBALTID];
+#else
+  return dynamicSlilLowerBound_;
+#endif
+}
+
 void BBWithSpill::AllocDevArraysForParallelACO(int numThreads) {
   // Temporarily holds large cudaMalloc arrays as they are divided
   InstCount *temp;
@@ -1504,8 +1508,6 @@ void BBWithSpill::AllocDevArraysForParallelACO(int numThreads) {
   for (int i = 0; i < dataDepGraph_->GetInstCnt(); i++)
     dev_spillCosts_[i] = &temp[i * numThreads];
   if (needsSLIL()) {
-    memSize = sizeof(DeviceSet<int> *) * regTypeCnt_;
-    cudaMallocManaged(&dev_SLILLiveRegIndices, memSize);
     memSize = sizeof(int *) * regTypeCnt_;
     cudaMallocManaged(&dev_sumOfLiveIntervalLengths_, memSize);
     memSize = sizeof(int) * regTypeCnt_ * numThreads;
@@ -1624,66 +1626,6 @@ void BBWithSpill::CopyPointersToDevice(SchedRegion* dev_rgn, int numThreads) {
     ((BBWithSpill *)
     dev_rgn)->dev_livePhysRegs_[i] = &dev_temp_livePhysRegs[i * numThreads];
   }
-
-  // Copy dev_SLILLiveRegIndices to device if we are using SLIL
-  // temporarily holds the array of DeviceSets before the
-  // pointers are properly assigned to dev_SLILLiveRegIndices
-  DeviceSet<int> *dev_temp_SLILLiveRegIndices;
-
-  if (needsSLIL()){
-    // temporarily holds host array of DeviceSets so they can be all
-    // copied to device in one cudaMemcpy call
-    DeviceSet<int> *temp_ds;
-    // holds temporary device set object created to be copied into host array
-    // of device sets
-    DeviceSet<int> *temp_cpy;
-    // holds the elmnts dev allocation for all device sets
-    int *dev_elmnts;
-    // Allocate large array for all device sets for all threads
-    memSize = sizeof(DeviceSet<int>) * regTypeCnt_ * numThreads;
-    gpuErrchk(cudaMallocManaged(&dev_temp_SLILLiveRegIndices, memSize));
-    // prepare host array for copy to device with one call
-    temp_ds = (DeviceSet<int> *)malloc(memSize);
-    memSize = sizeof(DeviceSet<int>);
-    for (int i = 0; i < regTypeCnt_; i++) {
-      // create a new DS of the correct size for that type of register
-      // and copy it to the temp_ds array numThreads times
-      temp_cpy = new DeviceSet<int>(regFiles_[i].getCount());
-      for (int j = 0; j < numThreads; j++)
-        memcpy(&temp_ds[(i * numThreads) + j], temp_cpy, memSize);
-      delete temp_cpy;
-    }
-    // copy formatted temp host array to device
-    memSize = sizeof(DeviceSet<int>) * regTypeCnt_ * numThreads;
-    gpuErrchk(cudaMemcpy(dev_temp_SLILLiveRegIndices, temp_ds, memSize,
-                         cudaMemcpyHostToDevice));
-    // free the temp host array
-    free(temp_ds);
-    // make sure host also has a copy of the device array
-    gpuErrchk(cudaMemPrefetchAsync(dev_temp_SLILLiveRegIndices, memSize, 
-                                   cudaCpuDeviceId));
-    // Find size of all DS->elmnts arrays and allocate enough for all threads
-    int totSize = 0;
-    for (int i = 0; i < regTypeCnt_; i++)
-      totSize += regFiles_[i].getCount();
-    memSize = sizeof(int) * totSize * numThreads;
-    gpuErrchk(cudaMalloc(&dev_elmnts, memSize));
-    // assign each dev_temp_SLILLiveRegIndices a portion of the dev_elmnts
-    // allocation and then set the dev_SLILLiveRegIndices pointers to each
-    // group of numThreads dev_temp_SLILLiveRegIndices
-    indx = 0;
-    for (int i = 0; i < regTypeCnt_; i++) {
-      for (int j = 0; j < numThreads; j++) {
-        if (regFiles_[i].getCount() > 0) {
-          dev_temp_SLILLiveRegIndices[(i * numThreads) + j].elmnt = &dev_elmnts[indx];
-          indx += regFiles_[i].getCount();
-        }
-      }
-      // update device pointer
-      ((BBWithSpill *)
-      dev_rgn)->dev_SLILLiveRegIndices[i] = &dev_temp_SLILLiveRegIndices[i * numThreads];
-    }
-  }  
   // make sure managed mem is updated on device before kernel start
   memSize = regTypeCnt_ * sizeof(WeightedBitVector) * numThreads;
   gpuErrchk(cudaMemPrefetchAsync(dev_temp_livePhysRegs, memSize, 0));
@@ -1697,10 +1639,6 @@ void BBWithSpill::CopyPointersToDevice(SchedRegion* dev_rgn, int numThreads) {
   memSize = sizeof(InstCount *) * dataDepGraph_->GetInstCnt();
   gpuErrchk(cudaMemPrefetchAsync(dev_spillCosts_, memSize, 0));
   if (needsSLIL()) {
-    memSize = sizeof(DeviceSet<int>) * regTypeCnt_ * numThreads;
-    gpuErrchk(cudaMemPrefetchAsync(dev_temp_SLILLiveRegIndices, memSize, 0));
-    memSize = sizeof(DeviceSet<int> *) * regTypeCnt_;
-    gpuErrchk(cudaMemPrefetchAsync(dev_SLILLiveRegIndices, memSize, 0));
     memSize = sizeof(int *) * regTypeCnt_;
     gpuErrchk(cudaMemPrefetchAsync(dev_sumOfLiveIntervalLengths_, memSize, 0));
   }
@@ -1720,9 +1658,6 @@ void BBWithSpill::FreeDevicePointers(int numThreads) {
   cudaFree(dev_peakSpillCost_);
   cudaFree(dev_totSpillCost_);
   if (needsSLIL()) {
-    cudaFree(dev_SLILLiveRegIndices[0][0].elmnt);
-    cudaFree(dev_SLILLiveRegIndices[0]);
-    cudaFree(dev_SLILLiveRegIndices);
     cudaFree(dev_slilSpillCost_);
     cudaFree(dev_dynamicSlilLowerBound_);
     cudaFree(dev_sumOfLiveIntervalLengths_[0]);
