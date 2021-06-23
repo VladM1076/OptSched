@@ -369,8 +369,6 @@ void BBWithSpill::InitForCostCmputtn_() {
   for (i = 0; i < regTypeCnt_; i++) {
     regFiles_[i].ResetCrntUseCnts();
     regFiles_[i].ResetCrntLngths();
-    // pretty sure this is incorrect
-    //regFiles_[i].resetInstIntervalTracking();
   }
 
   for (i = 0; i < regTypeCnt_; i++) {
@@ -403,8 +401,6 @@ void BBWithSpill::InitForCostCmputtn_() {
   for (i = 0; i < regTypeCnt_; i++) {
     regFiles_[i].ResetCrntUseCnts();
     regFiles_[i].ResetCrntLngths();
-    // pretty sure this is incorrect
-    //regFiles_[i].resetInstIntervalTracking();
   }
 
   for (i = 0; i < regTypeCnt_; i++) {
