@@ -332,7 +332,8 @@ InstSchedule *ACOScheduler::FindOneSchedule(InstCount RPTarget,
                                             dev_crntSlotNum_[GLOBALTID],
                                             false);
       // If an ant violates the RP cost constraint, terminate further
-      // schedule construction
+      // schedule construction. In the case of SLIL early termination,
+      // dynamic lower bound compuatation must be enabled in SchedRegion::runACO
       if (((BBWithSpill *)dev_rgn_)->GetCrntSpillCost() > RPTarget ||
           needsSLIL && ((BBWithSpill *)dev_rgn_)->GetDynamicLB() > RPTarget) {
         // set schedule cost to INVALID_VALUE so it is not considered for
@@ -482,7 +483,8 @@ InstSchedule *ACOScheduler::FindOneSchedule(InstCount RPTarget,
       inst->Schedule(crntCycleNum_, crntSlotNum_);
       rgn_->SchdulInst(inst, crntCycleNum_, crntSlotNum_, false);
       // If an ant violates the RP cost constraint, terminate further
-      // schedule construction
+      // schedule construction. In the case of SLIL early termination,
+      // dynamic lower bound compuatation must be enabled in SchedRegion::runACO
       if (((BBWithSpill*)rgn_)->GetCrntSpillCost() > RPTarget ||
           needsSLIL && ((BBWithSpill *)rgn_)->GetDynamicLB() > RPTarget) {
         // end schedule construction
