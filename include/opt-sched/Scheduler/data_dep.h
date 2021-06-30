@@ -725,6 +725,15 @@ private:
 
   bool vrfy_;
 
+  // holds the GLOBALTID of the thread that created this schedule
+  // required for copying to bestSched on device from schedules with interleaved
+  // arrays, which help with memory coalescing
+  // if this number is INVALID_VALUE, that means this schedule is not
+  // interleaved and has a regular array
+  // if this value is 0 or larger, this schedule is part of a group of schedules
+  // with interleaved arrays
+  int gtid_;
+
   bool VerifySlots_(MachineModel *machMdl, DataDepGraph *dataDepGraph);
   bool VerifyDataDeps_(DataDepGraph *dataDepGraph);
   __host__ __device__
@@ -827,7 +836,8 @@ public:
   void AllocateOnDevice(MachineModel *dev_machMdl);
   // Divide up passed dev array and set the dev pointers to pieces
   // of the passed array
-  void SetDevArrayPointers(MachineModel *dev_machMdl, InstCount *dev_temp);
+  void SetDevArrayPointers(MachineModel *dev_machMdl, int gtid,
+                           InstCount *dev_temp, int numThreads);
   // Returns size needed for all dev arrays for a schedule
   // used to preallocate memory to be passed to SetDevArrayPointers
   size_t GetSizeOfDevArrays();

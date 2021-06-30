@@ -720,14 +720,26 @@ FUNC_RESULT ACOScheduler::FindSchedule(InstSchedule *schedule_out,
     size_t sizePerSched = bestSchedule->GetSizeOfDevArrays();
     memSize = sizePerSched * NUMTHREADS * sizeof(InstCount);
     gpuErrchk(cudaMalloc(&dev_temp, memSize));
+
+    // In order to improve memory layout, each array in each schedule
+    // will be a large array holding all of the values for all threads in each
+    // array to be accessed using the index of the value we wish to access 
+    // and the threadId of the thread constructing the schedule.
+    // EX: for the value in index i for any thread:
+    // dev_instInSlot[(i * NUMTHREADS) + GLOBALTID]
+    // This will return the slot inst i is in for each thread
+    // A thread can be recognized to be grouped in this manner if its 
+    // member gtid != INVALID_VALUE, if it does it is not grouped in this manner
+    // The group of NUMTHREADS schedules below are grouped in this manner
+    // to improve global memory access patterns on the device
+
     memSize = sizeof(InstSchedule);
     for (int i = 0; i < NUMTHREADS; i++) {
       // Create new schedule
       host_schedules[i] = new InstSchedule(machMdl_, dataDepGraph_, true);
       // Pass a dev array to the schedule to be divided up between the required
       // dev arrays for InstSchedule
-      host_schedules[i]->SetDevArrayPointers(dev_MM_, 
-                                             &dev_temp[i*sizePerSched]);
+      host_schedules[i]->SetDevArrayPointers(dev_MM_, i, dev_temp, NUMTHREADS);
       // Copy to temp_schedules array to later copy to device with 1 cudaMemcpy
       memcpy(&temp_schedules[i], host_schedules[i], memSize);
     }

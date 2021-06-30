@@ -2722,6 +2722,9 @@ InstSchedule::InstSchedule(MachineModel *machMdl, DataDepGraph *dataDepGraph,
   dev_spillCosts_ = NULL;
   dev_peakRegPressures_ = NULL;
 
+  // by default, consider this a normal schedule
+  gtid_ = INVALID_VALUE;
+
   InstCount i;
 
   for (i = 0; i < totInstCnt_; i++) {
@@ -2781,7 +2784,11 @@ __host__ __device__
 bool InstSchedule::AppendInst(InstCount instNum) {
 #ifdef __CUDA_ARCH__
   assert(crntSlotNum_ < totSlotCnt_);
-  dev_instInSlot_[crntSlotNum_] = instNum;
+  // check if schedule is grouped or not
+  if (gtid_ == INVALID_VALUE)
+    dev_instInSlot_[crntSlotNum_] = instNum;
+  else
+    dev_instInSlot_[(crntSlotNum_ * NUMTHREADS) + gtid_] = instNum;
 
   if (vrfy_)
     if (instNum > maxInstNumSchduld_) {
@@ -2790,7 +2797,11 @@ bool InstSchedule::AppendInst(InstCount instNum) {
 
   if (instNum != SCHD_STALL) {
     assert(instNum >= 0 && instNum < totInstCnt_);
-    dev_slotForInst_[instNum] = crntSlotNum_;
+    // check if schedule is grouped or not
+    if (gtid_ == INVALID_VALUE)
+      dev_slotForInst_[instNum] = crntSlotNum_;
+    else
+      dev_slotForInst_[(instNum * NUMTHREADS) + gtid_] = crntSlotNum_;
     schduldInstCnt_++;
 #ifdef IS_DEBUG_SCHED2
 
@@ -2879,7 +2890,11 @@ InstCount InstSchedule::GetNxtInst(InstCount &cycleNum, InstCount &slotNum) {
   }
   do {
 #ifdef __CUDA_ARCH__
-    instNum = dev_instInSlot_[iterSlotNum_];
+    // check if schedule is grouped or not
+    if (gtid_ == INVALID_VALUE)
+      instNum = dev_instInSlot_[iterSlotNum_];
+    else
+      instNum = dev_instInSlot_[(iterSlotNum_ * NUMTHREADS) + gtid_];
 #else
     instNum = instInSlot_[iterSlotNum_];
 #endif
@@ -2893,12 +2908,25 @@ InstCount InstSchedule::GetNxtInst(InstCount &cycleNum, InstCount &slotNum) {
 
 __device__
 InstCount InstSchedule::GetPrevInstNum(InstCount instNum) {
-  int slot = dev_slotForInst_[instNum];
+  int slot;
+  InstCount prev_inst;
+  // check if schedule is grouped or not
+  if (gtid_ == INVALID_VALUE)
+    slot = dev_slotForInst_[instNum];
+  else
+    slot = dev_slotForInst_[(instNum * NUMTHREADS) + gtid_];
+
   if (slot > 0) { // not the first inst in schedule
     // iterate through instInSlot_ backwards and return first instNum reached
-    for (int i = slot - 1; i >= 0; i--)
-      if (dev_instInSlot_[i] != SCHD_STALL)
-        return dev_instInSlot_[i];
+    for (int i = slot - 1; i >= 0; i--) {
+      // check if schedule is grouped or not
+      if (gtid_ == INVALID_VALUE)
+        prev_inst = dev_instInSlot_[i];
+      else
+        prev_inst = dev_instInSlot_[(i * NUMTHREADS) + gtid_];
+      if (prev_inst != SCHD_STALL)
+        return prev_inst;
+    }
   }
   return INVALID_VALUE;  
 }
@@ -2908,12 +2936,23 @@ void InstSchedule::Reset() {
   InstCount i;
 #ifdef __CUDA_ARCH__
   if (vrfy_) {
-    for (i = 0; i <= maxInstNumSchduld_; i++) {
-      dev_slotForInst_[i] = SCHD_UNSCHDULD;
-    }
+    // check if schedule is grouped or not
+    if (gtid_ == INVALID_VALUE) {
+      for (i = 0; i <= maxInstNumSchduld_; i++) {
+        dev_slotForInst_[i] = SCHD_UNSCHDULD;
+      }
 
-    for (i = 0; i <= crntSlotNum_; i++) {
-      dev_instInSlot_[i] = SCHD_UNSCHDULD;
+      for (i = 0; i <= crntSlotNum_; i++) {
+        dev_instInSlot_[i] = SCHD_UNSCHDULD;
+      }
+    } else {
+      for (i = 0; i <= maxInstNumSchduld_; i++) {
+        dev_slotForInst_[(i * NUMTHREADS) + gtid_] = SCHD_UNSCHDULD;
+      }
+
+      for (i = 0; i <= crntSlotNum_; i++) {
+        dev_instInSlot_[(i * NUMTHREADS) + gtid_] = SCHD_UNSCHDULD;
+      }
     }
   }
 #else
@@ -2940,12 +2979,23 @@ void InstSchedule::Copy(InstSchedule *src) {
   Reset();
 #ifdef __CUDA_ARCH__
   InstCount i;
-  for (i = 0; i < totSlotCnt_ && src->dev_instInSlot_[i] != SCHD_UNSCHDULD; i++) {
-    AppendInst(src->dev_instInSlot_[i]);
+  // check if src schedule is grouped or not
+  if (src->gtid_ == INVALID_VALUE) {
+    for (i = 0; i < totSlotCnt_ && 
+                src->dev_instInSlot_[i] != SCHD_UNSCHDULD; i++) {
+      AppendInst(src->dev_instInSlot_[i]);
+    }
+  } else {
+    for (i = 0; i < totSlotCnt_ && src->dev_instInSlot_[(i * NUMTHREADS) + src->gtid_] != SCHD_UNSCHDULD; i++) {
+      AppendInst(src->dev_instInSlot_[(i * NUMTHREADS) + src->gtid_]);
+    }
   }
 
-  SetSpillCosts(src->dev_spillCosts_);
-  SetPeakRegPressures(src->dev_peakRegPressures_);
+  // Copying schedules on device does not support setting these arrays
+  // through these functions if src is a grouped schedule
+  if (src->gtid_ == INVALID_VALUE) 
+    SetSpillCosts(src->dev_spillCosts_);
+    SetPeakRegPressures(src->dev_peakRegPressures_);
 #else
   InstCount i;
   for (i = 0; i < totSlotCnt_ && src->instInSlot_[i] != SCHD_UNSCHDULD; i++) {
@@ -2964,10 +3014,18 @@ void InstSchedule::Copy(InstSchedule *src) {
 __host__ __device__
 void InstSchedule::SetSpillCosts(InstCount spillCosts[]) {
 #ifdef __CUDA_ARCH__
-  totSpillCost_ = 0; 
-  for (InstCount i = 0; i < totInstCnt_; i++) {
-    dev_spillCosts_[i] = spillCosts[i];
-    totSpillCost_ += spillCosts[i];
+  totSpillCost_ = 0;
+  // check if schedule is grouped or not
+  if (gtid_ == INVALID_VALUE) {
+    for (InstCount i = 0; i < totInstCnt_; i++) {
+      dev_spillCosts_[i] = spillCosts[i];
+      totSpillCost_ += spillCosts[i];
+    }
+  } else {
+    for (InstCount i = 0; i < totInstCnt_; i++) {
+      dev_spillCosts_[(i * NUMTHREADS) + gtid_] = spillCosts[i];
+      totSpillCost_ += spillCosts[i];
+    }
   }
 #else
   totSpillCost_ = 0;
@@ -2981,17 +3039,33 @@ void InstSchedule::SetSpillCosts(InstCount spillCosts[]) {
 __device__
 void InstSchedule::Dev_SetSpillCosts(InstCount **spillCosts) {
   totSpillCost_ = 0;
-  for (InstCount i = 0; i < totInstCnt_; i++) {
-    dev_spillCosts_[i] = spillCosts[i][GLOBALTID];
-    totSpillCost_ += spillCosts[i][GLOBALTID];
-  }  
+  // check if schedule is grouped or not
+  if (gtid_ == INVALID_VALUE) {
+    for (InstCount i = 0; i < totInstCnt_; i++) {
+      dev_spillCosts_[i] = spillCosts[i][GLOBALTID];
+      totSpillCost_ += spillCosts[i][GLOBALTID];
+    }
+  } else {
+    for (InstCount i = 0; i < totInstCnt_; i++) {
+      dev_spillCosts_[(i * NUMTHREADS) + gtid_] = spillCosts[i][GLOBALTID];
+      totSpillCost_ += spillCosts[i][GLOBALTID];
+    }
+  } 
 }
 
 __host__ __device__
 void InstSchedule::SetPeakRegPressures(InstCount peakRegPressures[]) {
 #ifdef __CUDA_ARCH__
-  for (InstCount i = 0; i < dev_machMdl_->GetRegTypeCnt(); i++) {
-    dev_peakRegPressures_[i] = peakRegPressures[i];
+  InstCount regTypeCnt = dev_machMdl_->GetRegTypeCnt();
+  // check if schedule is grouped or not
+  if (gtid_ == INVALID_VALUE) {
+    for (InstCount i = 0; i < regTypeCnt; i++) {
+      dev_peakRegPressures_[i] = peakRegPressures[i];
+    }
+  } else {
+    for (InstCount i = 0; i < regTypeCnt; i++) {
+      dev_peakRegPressures_[(i * NUMTHREADS) + gtid_] = peakRegPressures[i];
+    }
   }
 #else
   for (InstCount i = 0; i < machMdl_->GetRegTypeCnt(); i++) {
@@ -3002,8 +3076,17 @@ void InstSchedule::SetPeakRegPressures(InstCount peakRegPressures[]) {
 
 __device__
 void InstSchedule::Dev_SetPeakRegPressures(InstCount **peakRegPressures) {
-  for (InstCount i = 0; i < dev_machMdl_->GetRegTypeCnt(); i++) {
-    dev_peakRegPressures_[i] = peakRegPressures[i][GLOBALTID];
+  InstCount regTypeCnt = dev_machMdl_->GetRegTypeCnt();
+  // check if schedule is grouped or not
+  if (gtid_ == INVALID_VALUE) {
+    for (InstCount i = 0; i < regTypeCnt; i++) {
+      dev_peakRegPressures_[i] = peakRegPressures[i][GLOBALTID];
+    }
+  } else {
+    for (InstCount i = 0; i < regTypeCnt; i++) {
+      dev_peakRegPressures_[(i * NUMTHREADS) + gtid_] = 
+                                    peakRegPressures[i][GLOBALTID];
+    }
   }
 }
 
@@ -3017,7 +3100,11 @@ __host__ __device__
 InstCount InstSchedule::GetSpillCost(InstCount stepNum) {
   assert(stepNum >= 0 && stepNum < totInstCnt_);
 #ifdef __CUDA_ARCH__
-  return dev_spillCosts_[stepNum];
+  // check if schedule is grouped or not
+  if (gtid_ == INVALID_VALUE)
+    return dev_spillCosts_[stepNum];
+  else
+    return dev_spillCosts_[(stepNum * NUMTHREADS) + gtid_];
 #else
   return spillCosts_[stepNum];
 #endif
@@ -3044,7 +3131,12 @@ void InstSchedule::Print() {
   for (i = 0; i < crntSlotNum_; i++) {
     if (slotInCycle == 0)
 #ifdef __CUDA_ARCH__
-      printf("Cycle# %d : %d\n", cycleNum, dev_instInSlot_[i]);
+      // check if schedule is grouped or not
+      if (gtid_ == INVALID_VALUE)
+        printf("Cycle# %d : %d\n", cycleNum, dev_instInSlot_[i]);
+      else
+        printf("Cycle# %d : %d\n", cycleNum, 
+               dev_instInSlot_[(i * NUMTHREADS) + gtid_]);
 #else
       printf("Cycle# %d : %d\n", cycleNum, instInSlot_[i]);
 #endif
@@ -3323,19 +3415,30 @@ void InstSchedule::AllocateOnDevice(MachineModel *dev_machMdl) {
   dev_machMdl_ = dev_machMdl;
 }
 
-void InstSchedule::SetDevArrayPointers(MachineModel *dev_machMdl, 
-                                       InstCount *dev_temp) {
+// Schedules with arrays set in this manner are considered grouped together
+// All of the arrays of these schedules are shared with interleaved
+// addresses in order to improve global memory access patterns on the device
+// Each value in the array for a particular schedule can be found using
+// [(i * NUMTHREADS) + gtid_] to find value in index i for schedule created by
+// thread gtid_
+void InstSchedule::SetDevArrayPointers(MachineModel *dev_machMdl, int gtid, 
+                                       InstCount *dev_temp, int numThreads) {
   dev_machMdl_ = dev_machMdl;
+  gtid_ = gtid;
   int index = 0;
+  // the first totSlotCnt_ * numThreads indexes are allocated for dev_instInSlot
+  // for all grouped schedules
   dev_instInSlot_ = &dev_temp[index];
-  // Increment the index past the needed number of slots for dev_instInSlot_
-  index += totSlotCnt_;
+  index += totSlotCnt_ * numThreads;
+  // the next totInstCnt_ * numThreads indexes are allocated for dev_slotForInst
+  // for all grouped schedules
   dev_slotForInst_ = &dev_temp[index];
-  // Increment the index past needed num of slots for dev_slotForInst_
-  index += totInstCnt_;
+  index += totInstCnt_ * numThreads;
+  // the next totInstCnt_ * numThreads indexes are allocated for dev_spillCosts
   dev_spillCosts_ = &dev_temp[index];
-  // Increment the index past needed num of slots for dev_spillCosts_
-  index += totInstCnt_;
+  index += totInstCnt_ * numThreads;
+  // the last regTypeCnt_ * numThreads indexes are allocated for
+  // dev_peakRegPressures 
   dev_peakRegPressures_ = &dev_temp[index];
 }
 
@@ -3344,61 +3447,71 @@ size_t InstSchedule::GetSizeOfDevArrays() {
 }
 
 void InstSchedule::CopyArraysToDevice() {
-  size_t memSize;
-  // Copy instInSlot to device
-  memSize = totSlotCnt_ * sizeof(InstCount);
-  gpuErrchk(cudaMemcpy(dev_instInSlot_, instInSlot_, memSize,
-                       cudaMemcpyHostToDevice));
-  // Copy slotForInst_ to device
-  memSize = totInstCnt_ * sizeof(InstCount);
-  gpuErrchk(cudaMemcpy(dev_slotForInst_, slotForInst_, memSize,
-                       cudaMemcpyHostToDevice));
-  // Copy spillCosts to device
-  gpuErrchk(cudaMemcpy(dev_spillCosts_, spillCosts_, memSize,
-                       cudaMemcpyHostToDevice));
-  // Copy peakRegPressures to device
-  memSize = machMdl_->GetRegTypeCnt() * sizeof(InstCount);
-  gpuErrchk(cudaMemcpy(dev_peakRegPressures_, peakRegPressures_, memSize,
-                       cudaMemcpyHostToDevice));
+  if (gtid_ == INVALID_VALUE) {
+    size_t memSize;
+    // Copy instInSlot to device
+    memSize = totSlotCnt_ * sizeof(InstCount);
+    gpuErrchk(cudaMemcpy(dev_instInSlot_, instInSlot_, memSize,
+                         cudaMemcpyHostToDevice));
+    // Copy slotForInst_ to device
+    memSize = totInstCnt_ * sizeof(InstCount);
+    gpuErrchk(cudaMemcpy(dev_slotForInst_, slotForInst_, memSize,
+                         cudaMemcpyHostToDevice));
+    // Copy spillCosts to device
+    gpuErrchk(cudaMemcpy(dev_spillCosts_, spillCosts_, memSize,
+                         cudaMemcpyHostToDevice));
+    // Copy peakRegPressures to device
+    memSize = machMdl_->GetRegTypeCnt() * sizeof(InstCount);
+    gpuErrchk(cudaMemcpy(dev_peakRegPressures_, peakRegPressures_, memSize,
+                         cudaMemcpyHostToDevice));
+  } else
+    Logger::Fatal("Arrays from grouped schedules cannot be copied to device");
 }
 
 void InstSchedule::CopyArraysToHost() {
-  size_t memSize;
-  // Copy instInSlot to host
-  memSize = totSlotCnt_ * sizeof(InstCount);
-  gpuErrchk(cudaMemcpy(instInSlot_, dev_instInSlot_, memSize,
-		       cudaMemcpyDeviceToHost));
-  // Copy slotForInst_ to host
-  memSize = totInstCnt_ * sizeof(InstCount);
-  gpuErrchk(cudaMemcpy(slotForInst_, dev_slotForInst_, memSize, 
-		       cudaMemcpyDeviceToHost));
-  // Copy spillCosts to host
-  gpuErrchk(cudaMemcpy(spillCosts_, dev_spillCosts_, memSize, 
-		       cudaMemcpyDeviceToHost));
-  // Copy peakRegPressures to host
-  memSize = machMdl_->GetRegTypeCnt() * sizeof(InstCount);
-  gpuErrchk(cudaMemcpy(peakRegPressures_, dev_peakRegPressures_, memSize,
-		       cudaMemcpyDeviceToHost));
+  if (gtid_ == INVALID_VALUE) {
+    size_t memSize;
+    // Copy instInSlot to host
+    memSize = totSlotCnt_ * sizeof(InstCount);
+    gpuErrchk(cudaMemcpy(instInSlot_, dev_instInSlot_, memSize,
+                         cudaMemcpyDeviceToHost));
+    // Copy slotForInst_ to host
+    memSize = totInstCnt_ * sizeof(InstCount);
+    gpuErrchk(cudaMemcpy(slotForInst_, dev_slotForInst_, memSize, 
+                         cudaMemcpyDeviceToHost));
+    // Copy spillCosts to host
+    gpuErrchk(cudaMemcpy(spillCosts_, dev_spillCosts_, memSize, 
+                         cudaMemcpyDeviceToHost));
+    // Copy peakRegPressures to host
+    memSize = machMdl_->GetRegTypeCnt() * sizeof(InstCount);
+    gpuErrchk(cudaMemcpy(peakRegPressures_, dev_peakRegPressures_, memSize,
+                         cudaMemcpyDeviceToHost));
+  } else
+    Logger::Fatal("Arrays from grouped schedules cannot be copied to host");
 }
 
 void InstSchedule::FreeDeviceArrays() {
-  cudaFree(dev_instInSlot_);
-  cudaFree(dev_slotForInst_);
-  cudaFree(dev_spillCosts_);
-  cudaFree(dev_peakRegPressures_);  
+  if (gtid_ == INVALID_VALUE) {
+    cudaFree(dev_instInSlot_);
+    cudaFree(dev_slotForInst_);
+    cudaFree(dev_spillCosts_);
+    cudaFree(dev_peakRegPressures_);
+  }
 }
 
 __device__
 void InstSchedule::Initialize() {
   InstCount i;
+  
+  gtid_ = GLOBALTID;
 
   for (i = 0; i < totInstCnt_; i++) {
-    dev_slotForInst_[i] = SCHD_UNSCHDULD;
-    dev_spillCosts_[i] = 0;
+    dev_slotForInst_[(i * NUMTHREADS) + gtid_] = SCHD_UNSCHDULD;
+    dev_spillCosts_[(i * NUMTHREADS) + gtid_] = 0;
   }
 
   for (i = 0; i < totSlotCnt_; i++) {
-    dev_instInSlot_[i] = SCHD_UNSCHDULD;
+    dev_instInSlot_[(i * NUMTHREADS) + gtid_] = SCHD_UNSCHDULD;
   }
 
   schduldInstCnt_ = 0;
